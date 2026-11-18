@@ -468,11 +468,11 @@
       velocity="10.0" />
   </joint>
   <!-- v8.3 ORCA Hand 挂接：link7 -> orca_root（fixed，不进 IK 链）。
-       朝向：掌面向上托住果实（握合腔开口向上），指尖自腕前方 (+x)
-       向上包拢；握合腔中心对准果实保持点 link7 局部 (0, 0, -0.03)。
-       偏移与旋转依据官方展开 URDF 的 root 系几何实测确定。 -->
+       按实际拼装：手的安装基面（塔座底面，root 系 z=-0.01821）与机械臂
+       末端法兰面（官方 tool_joint: link7 系 (0,0.03325,0.15688)）相切；
+       手指延伸方向对齐工具轴（link7 +z），掌面朝 link7 +x。 -->
   <joint name="joint_orca_wrist" type="fixed">
-    <origin xyz="-0.15 0 -0.06" rpy="1.5707963267948966 0 1.5707963267948966" />
+    <origin xyz="0 0 0.10891" rpy="0 0 -1.5707963267948966" />
     <parent link="link7" />
     <child link="orca_root" />
   </joint>

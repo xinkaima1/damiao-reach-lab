@@ -7,18 +7,22 @@
      （官方夹爪子树已裁剪；ORCA 为固定子装配，不引入任何可动关节）；
   3) 达妙 7 个关节限位逐项等于官方 URDF <limit>；
   4) 末端 link 名 = link7，且其 link 索引按名反查得到（不硬编码）；
-  5) 零位 FK 断言 = (0, -0.03325, 0.4981) m，容差 5 mm
-     （与 handoff/演算基准.json 的 zero_pose.link7_tcp_m 一致；
-     精度判定点仍为 link7 原点，ORCA 子装配不进 IK 链、不改变该口径）；
-  6) ORCA 子装配断言：42 个 orca_* link、挂接 joint_orca_wrist 存在、
-     全部 ORCA link 惯量置零（mass=0，符合 v8.3 默认口径）、
-     碰撞过滤可按组屏蔽（不参与仿真接触）；
-  7) ORCA 包围盒断言：整体尺寸与官方实测一致量级（≤ 0.30 m），且零位时不与地面穿模；
-  8) 渲染一帧验证官方 STL 显示通路正常（达妙 + ORCA）。
+  5) 零位 FK 断言：link7 原点 = (0, -0.03325, 0.4981) m，且
+     **TCP（果实被持点 = ORCA 握合腔中心）= (0.048, -0.03325, 0.81901) m**（容差 5 mm；
+     v8.3 修正口径：判定点为 TCP，零位 TCP = link7 原点 + TCP_OFFSET，零位朝向 R=I）；
+  6) 拼装断言：挂接 joint_orca_wrist 的 origin 与「手基面与法兰面相切」口径一致
+     （URDF 文本校验 xyz=(0,0,0.10891)、rpy=(0,0,-π/2)；法兰面 = link7 系 z=0.0907，
+     手基面 = 塔座底面 root 系 z=-0.01821）；
+  7) ORCA 子装配断言：42 个 orca_* link、全部 ORCA link 惯量置零（mass=0）、
+     碰撞过滤可按组屏蔽（不参与仿真接触）、零位时手基面与法兰面相切（AABB Δ≤1 mm）；
+  8) ORCA 包围盒断言（≤ 0.35 m）且不与地面穿模；
+  9) 渲染一帧验证官方 STL 显示通路正常（达妙 + ORCA）。
 """
 import math
+import re
 import sys
 
+import numpy as np
 import pybullet as p
 import pybullet_data
 
@@ -31,16 +35,20 @@ EXPECT_LIMITS = [
     (-1.3264502315156903, 1.3264502315156903),
     (-1.335176877775662, 1.335176877775662),
 ]
-# 零位 link7 原点（官方 URDF 链式变换推导，与演算基准.json link7_tcp_m 一致）
+# 零位 link7 原点（官方 URDF 链式变换推导）与零位 TCP（= 原点 + TCP_OFFSET，R=I）
 EXPECT_HOME_EE = (0.0, -0.03325, 0.4981)
+TCP_OFFSET = (0.048, 0.0, 0.32091)
+EXPECT_HOME_TCP = tuple(round(a + b, 6) for a, b in zip(EXPECT_HOME_EE, TCP_OFFSET))
 EXPECT_EE_NAME = "link7"
 EXPECT_N_LINKS = 49            # 7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed
 EXPECT_N_REVOLUTE = 7
 EXPECT_N_ORCA = 42             # orca_ 前缀 link 数
 ORCA_PREFIX = "orca_"
 ORCA_MOUNT_JOINT = "joint_orca_wrist"
+ORCA_MOUNT_XYZ = (0.0, 0.0, 0.10891)      # 法兰面 z 0.0907 + 手基面抬升 0.01821
+ORCA_MOUNT_RPY = (0.0, 0.0, -1.5707963267948966)
 ORCA_COLLISION_GROUP, ORCA_COLLISION_MASK = 2, 0
-ORCA_MAX_SPAN = 0.30           # 官方几何实测约 0.098 × 0.109 × 0.157 m，取 0.30 m 为断言上限
+ORCA_MAX_SPAN = 0.35           # 手沿工具轴总长约 0.275 m，取 0.35 m 为断言上限
 TOL = 0.005
 
 
@@ -87,26 +95,42 @@ def main() -> int:
         print("== FAILED（末端 link 未找到）==")
         return 1
 
-    print(f"[5] 零位 FK 断言（理论值 {EXPECT_HOME_EE} m，容差 5 mm，不含夹爪偏移；"
-          f"ORCA 子装配不进 IK 链，判定点口径不变）")
+    print(f"[5] 零位 FK 断言（容差 5 mm）：link7 原点 = {EXPECT_HOME_EE}；"
+          f"TCP（果实被持点 = 握合腔中心）= {EXPECT_HOME_TCP}（零位朝向 R=I）")
     for i in range(7):
         p.resetJointState(robot, i, 0.0)
     ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
-    ee_frame = ls[4]   # worldLinkFramePosition：URDF link 原点（主口径）
-    ee_com = ls[0]     # linkWorldPosition：COM（备查口径）
+    ee_frame = ls[4]
+    ee_com = ls[0]
+    R = np.array(p.getMatrixFromQuaternion(ls[5])).reshape(3, 3)
+    tcp = np.array(ee_frame) + R @ np.array(TCP_OFFSET)
     err = math.dist(ee_frame, EXPECT_HOME_EE)
-    ok &= err <= TOL
+    err_tcp = math.dist(tcp, EXPECT_HOME_TCP)
+    ok &= err <= TOL and err_tcp <= TOL
     print(f"    link7 原点 = ({ee_frame[0]:.5f}, {ee_frame[1]:.5f}, {ee_frame[2]:.5f})，"
           f"|Δ| = {err * 1000:.3f} mm {'PASS' if err <= TOL else 'FAIL'}")
-    print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查，与原点相差属正常）")
+    print(f"    TCP 果实点 = ({tcp[0]:.5f}, {tcp[1]:.5f}, {tcp[2]:.5f})，"
+          f"|Δ| = {err_tcp * 1000:.3f} mm {'PASS' if err_tcp <= TOL else 'FAIL'}")
+    print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查）")
 
-    print("[6] ORCA 子装配断言（固定子装配 / 惯量置零 / 碰撞过滤屏蔽）")
+    print("[6] 拼装断言（手基面与法兰面相切 / 工具轴对齐 / 挂接 origin 校验）")
     orca_idx = [i for i in range(n) if link_names[i].startswith(ORCA_PREFIX)]
-    mount_ok = any(p.getJointInfo(robot, i)[1].decode() == ORCA_MOUNT_JOINT for i in range(n))
-    ok &= len(orca_idx) == EXPECT_N_ORCA and mount_ok
-    print(f"    orca_* link 数 = {len(orca_idx)}（期望 {EXPECT_N_ORCA}）；"
-          f"挂接 joint = {ORCA_MOUNT_JOINT} {'存在' if mount_ok else '缺失'} "
-          f"{'PASS' if len(orca_idx) == EXPECT_N_ORCA and mount_ok else 'FAIL'}")
+    with open("damiao_reach.urdf", "r", encoding="utf-8") as f:
+        urdf_text = f.read()
+    jm = re.search(r'<joint name="joint_orca_wrist" type="fixed">.*?'
+                   r'<origin xyz="([^"]+)" rpy="([^"]+)"', urdf_text, re.S)
+    xyz_ok = rpy_ok = False
+    if jm:
+        xyz = tuple(float(v) for v in jm.group(1).split())
+        rpy = tuple(float(v) for v in jm.group(2).split())
+        xyz_ok = all(abs(a - b) < 1e-6 for a, b in zip(xyz, ORCA_MOUNT_XYZ))
+        rpy_ok = all(abs(a - b) < 1e-6 for a, b in zip(rpy, ORCA_MOUNT_RPY))
+    ok &= jm is not None and xyz_ok and rpy_ok
+    print(f"    挂接 origin xyz = {jm.group(1) if jm else '缺失'}（期望 {ORCA_MOUNT_XYZ}）"
+          f"{'PASS' if xyz_ok else 'FAIL'}")
+    print(f"    挂接 rpy = {jm.group(2) if jm else '缺失'}（期望 {ORCA_MOUNT_RPY}）"
+          f"{'PASS' if rpy_ok else 'FAIL'}")
+
     masses = [p.getDynamicsInfo(robot, i)[0] for i in orca_idx]
     zero_mass = all(m == 0.0 for m in masses)
     ok &= zero_mass
@@ -116,23 +140,27 @@ def main() -> int:
     print(f"    碰撞过滤: {len(orca_idx)} 个 ORCA link 已设 group={ORCA_COLLISION_GROUP}/"
           f"mask={ORCA_COLLISION_MASK}（不参与仿真接触）PASS")
 
-    print("[7] ORCA 包围盒断言（零位、世界系）")
+    print("[7] ORCA 包围盒与相切断言（零位、世界系）")
     mins = [1e9] * 3
     maxs = [-1e9] * 3
     for i in orca_idx:
-        pos = p.getLinkState(robot, i, computeForwardKinematics=1)[4]
-        mins = [min(a, b) for a, b in zip(mins, pos)]
-        maxs = [max(a, b) for a, b in zip(maxs, pos)]
+        aabb = p.getAABB(robot, i)
+        mins = [min(a, b) for a, b in zip(mins, aabb[0])]
+        maxs = [max(a, b) for a, b in zip(maxs, aabb[1])]
     span = [hi - lo for lo, hi in zip(mins, maxs)]
     span_ok = all(s <= ORCA_MAX_SPAN for s in span)
     above_ground = mins[2] > 0.0
-    ok &= span_ok and above_ground
+    # 相切断言：手 AABB 最低面（世界 z）≈ 法兰面 = 零位 link7 原点 z + 0.0907
+    flange_z = EXPECT_HOME_EE[2] + 0.0907
+    tangent = abs(mins[2] - flange_z) <= 0.001
+    ok &= span_ok and above_ground and tangent
     print(f"    包围盒 min={[round(v, 4) for v in mins]} max={[round(v, 4) for v in maxs]}")
-    print(f"    尺寸 = {[round(s, 4) for s in span]} m（≤ {ORCA_MAX_SPAN} m；官方几何实测约 0.098×0.109×0.157 m）"
-          f"{'PASS' if span_ok else 'FAIL'}")
+    print(f"    尺寸 = {[round(s, 4) for s in span]} m（≤ {ORCA_MAX_SPAN} m）{'PASS' if span_ok else 'FAIL'}")
+    print(f"    手基面 z = {mins[2]:.5f} m ≈ 法兰面 z = {flange_z:.5f} m（相切，Δ≤1 mm）"
+          f"{'PASS' if tangent else 'FAIL'}")
     print(f"    零位最低点 z = {mins[2]:.4f} m > 0（不与地面穿模）{'PASS' if above_ground else 'FAIL'}")
 
-    print("[8] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）")
+    print("[9] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）")
     view = p.computeViewMatrixFromYawPitchRoll(
         cameraTargetPosition=(0.15, 0.0, 0.25), distance=1.2,
         yaw=50, pitch=-25, roll=0, upAxisIndex=2)

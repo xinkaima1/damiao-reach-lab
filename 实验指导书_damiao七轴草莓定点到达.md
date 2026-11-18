@@ -1,9 +1,9 @@
 # 实验指导书：达妙七轴谐波机械臂 草莓采摘定点到达仿真（WSL2 + PyBullet，v8.3 ORCA Hand 末端执行器版）
 
-> **版本**：**v8.3（达妙七轴 + ORCA Hand 末端执行器版，2026-11-18）**：**课设立论为仿生机械臂本体的定位精度验证；末端执行器为可替换模块**。v8.3 把末端执行器由卷曲仿生章鱼爪演示层更换为 **ORCA Hand 官方 URDF 几何**（srl-ethz/orcahand_description，MIT License）：以 fixed joint 挂接于 `link7` 之后作为**固定子装配**，惯量置零、17 个 revolute 锁定为预设握合姿态、碰撞过滤屏蔽不参与接触，**不进 IK 链、不改 5 个目标点、不改误差口径**（判定点仍为 `link7` 原点）。仿生臂本体全部沿用 v8.2 口径：达妙官方 URDF 派生（几何/惯量/限位逐字未改）、7 组官方限位、力矩上限 50/50/50/50/12/12/12 N·m、预筛包络 r≤0.389 m / z∈[-0.111, 0.507]、两段式位置-only IK、5 mm 阈值、`setGravity(0,0,0)` 无重力设定。v8.2 章鱼爪演示层保留为 `--legacy-tentacle` 分支（默认关闭）。§8.2 / §8.3 / §13 按 2026-11-18 v8.3 全量重跑回填（976 帧 / 265.4 s / render_time_s 265.4）。
+> **版本**：**v8.3（达妙七轴 + ORCA Hand 末端执行器版，2026-11-18，同日两次按用户指正修正）**：**课设立论为仿生机械臂本体的定位精度验证；末端执行器为可替换模块**。v8.3 把末端执行器由卷曲仿生章鱼爪演示层更换为 **ORCA Hand 官方 URDF 几何**（srl-ethz/orcahand_description，MIT License）：以 fixed joint 挂接于 `link7` 之后作为**固定子装配**，惯量置零、17 个 revolute 锁定为预设握合姿态、碰撞过滤屏蔽不参与接触。**按实际拼装重算（用户两次指正）**：① 手的安装基面与机械臂末端法兰面（link7 腕筒顶面，link7 系 z=0.0907）**相切**，手指沿工具轴外伸；② 精度判定点改为 **TCP = 果实被持点 = ORCA 握合腔中心**（link7 系 TCP_OFFSET = (0.048, 0, 0.32091)），**5 个目标点 = 果实位置，由 `select_targets.py` 按 TCP 口径重算**，预筛包络同步改为果实点云实测（前方带 x≥0.25、z∈[0.12,0.45]、r≤0.55）。仿生臂本体全部沿用 v8.2 口径：达妙官方 URDF 派生（几何/惯量/限位逐字未改）、7 组官方限位、力矩上限 50/50/50/50/12/12/12 N·m、5 mm 阈值、`setGravity(0,0,0)` 无重力设定。v8.2 章鱼爪演示层保留为 `--legacy-tentacle` 分支（默认关闭）。§8.2 / §8.3 / §13 按 2026-11-18 v8.3 修正后全量重跑回填（976 帧 / 262.1 s / render_time_s 262.1）。
 > **口径边界**：v8.2 及更早的实跑数字**不是 v8.3 的重跑结果**，引用处均注明来源版本；v8.3 重跑数字以 `results/reach_results.csv` 与 `results/run_stats.json` 为准。带载对照实验（`--with-orca-mass`）数字**独立记录**，禁止与无重力基线混报。
 > **执行环境**：Windows + WSL2 Ubuntu，conda `robot`（Python 3.11 + pybullet 3.2.7）
-> **阅读约定**：所有命令可直接复制粘贴执行。**v8.3 为当前唯一执行基线**；仍标注「未执行」的项目不得当作结论引用。
+> **阅读约定**：所有命令可直接复制粘贴执行。**v8.3 修正版为当前唯一执行基线**；仍标注「未执行」的项目不得当作结论引用。
 
 
 ---
@@ -18,7 +18,7 @@
 4. 方法：PyBullet 内置 `calculateInverseKinematics` **位置-only IK**（不约束姿态）+ **位置-only 数值精修**（§2.1，两段式，原因与实现见 §7 `refine_ik()`）；
 5. 引擎口径全项目统一为 **PyBullet**，文档、说明书、答辩话术不出现第二引擎叙事；
 6. 仿真动力学为**无重力设定**（`setGravity(0,0,0)`）+ 轨迹段速度前馈：验证的是轨迹规划与位置伺服的**指令跟踪与定位收敛**。**达妙实物有重力**：按官方 URDF 惯量做静态重力矩校核（numpy 运算，g=9.81，6000 组限位内采样）得 J2 峰值 8.83 N·m、J3 2.67、J4 2.74、J5 0.65、J6 0.68、J7 0.24 N·m，对照电机上限 50/50/50/50/12/12/12，**J5–J7 裕度约 11 N·m，全程静态不超限**；但该值是**静态演算**（未含减速器效率与动态项），**不是带载精度验证、也不是 PyBullet 实跑**。重力前馈补偿与带载精度属实物化后续工作，不在本轮范围。本条为答辩与说明书的统一口径，主动声明而非被问出来；
-7. **演示层抓放循环（v5 正式纳入范围）**：每个草莓点到位判定完成后，追加一段「移到篮子放果点 → 末端下降（示意低头放果）→ 果实视觉搬入篮中并留存 → 前往下一点」的轨迹，形成 抓-放-抓 的采摘观感。该层是**纯视觉示意**：篮子与果实均为静态视觉体，果实位置由脚本直接搬运，**无夹爪、无接触/约束、无夹持力、不约束末端姿态**；放果点不是第 6 个验收目标，不写入 CSV、不参与 §1.3 的两重静态判定与伺服跟踪判定，也不代表抓取成功率或果实识别能力。演示层另含 **末端执行器视觉呈现**（**v8.3 默认 = ORCA Hand 固定子装配**：官方 URDF 几何、预设握合姿态、握合腔对准果实保持点、纯视觉、无接触力；**`--legacy-tentacle` 分支 = v8.2 卷曲章鱼爪**：3 根 x 6 段纯视觉体，三阶段「卷曲成对数螺旋 → 反向展开 → 球面缠绕包覆」，几何为示意值、非中科大实物参数，触手与果实在 link7 局部坐标系内生成、再按 link7 的世界旋转矩阵变换到世界系）；两者都**不是真实抓取**、无接触 / 夹持力、不参与误差判定、不写 CSV，也不代表抓取成功率。叙事口径为**图纸与说明书讲仿生机构结构，仿真以达妙七轴平台验证控制流程**。答辩必须主动说明这一边界。
+7. **演示层抓放循环（v5 正式纳入范围）**：每个草莓点到位判定完成后，追加一段「移到篮子放果点 → 末端下降（示意低头放果）→ 果实视觉搬入篮中并留存 → 前往下一点」的轨迹，形成 抓-放-抓 的采摘观感。该层是**纯视觉示意**：篮子与果实均为静态视觉体，果实位置由脚本直接搬运，**无夹爪、无接触/约束、无夹持力、不约束末端姿态**；放果点不是第 6 个验收目标，不写入 CSV、不参与 §1.3 的两重静态判定与伺服跟踪判定，也不代表抓取成功率或果实识别能力。演示层另含 **末端执行器视觉呈现**（**v8.3 默认 = ORCA Hand 固定子装配**：官方 URDF 几何、预设握合姿态、握合腔中心即 TCP 果实被持点（精度判定点）、纯视觉、无接触力；**`--legacy-tentacle` 分支 = v8.2 卷曲章鱼爪**：3 根 x 6 段纯视觉体，三阶段「卷曲成对数螺旋 → 反向展开 → 球面缠绕包覆」，几何为示意值、非中科大实物参数，触手与果实在 link7 局部坐标系内生成、再按 link7 的世界旋转矩阵变换到世界系）；两者都**不是真实抓取**、无接触 / 夹持力、不参与误差判定、不写 CSV，也不代表抓取成功率。叙事口径为**图纸与说明书讲仿生机构结构，仿真以达妙七轴平台验证控制流程**。答辩必须主动说明这一边界。
 
 ---
 
@@ -30,9 +30,9 @@
 
 ### 1.2 误差定义（原理、脚本、结果表、答辩四处统一，不得混用）
 
-- **末端 link 名 = `link7`**（官方 URDF 中 `link7` 是七轴臂最后一节；官方夹爪 `tool_link` 已被裁剪，故末端即 `link7`）；
-- **到位误差 = 目标点到 link7 原点（URDF link frame 原点）的欧氏距离**，**不含任何夹爪偏移**（官方 `tool_link` 相对 `link7` 有 0.157 m 偏移，本轮口径作废、不使用）；
-- 代码实现：`getLinkState(robot, ee_idx, computeForwardKinematics=1)` 返回元组的 **[4] `worldLinkFramePosition`**（主口径，与 IK 的末端参考系一致）；**[0] `linkWorldPosition` 是质心（COM）位置，仅作备查列记录**，不得作为主判据（达妙臂两者相差约 **71.7 mm**，混用会制造虚假误差）。
+- **末端 link 名 = `link7`**（官方 URDF 中 `link7` 是七轴臂最后一节；官方夹爪 `tool_link` 已被裁剪，故机械臂末端即 `link7`）；
+- **判定点 = TCP = 果实被持点 = ORCA 握合腔中心**（v8.3 修正口径）：TCP = `link7` 原点 + R_link7 @ `TCP_OFFSET`，`TCP_OFFSET = (0.048, 0, 0.32091)` m 为官方展开 URDF 几何实测（握合腔位于掌面与卷曲指尖之间）；**到位误差 = 果实点到 TCP 的欧氏距离**——拼装后到达果实的是末端执行器的握合腔而非法兰原点（2026-11-18 用户指正后重算）；
+- 代码实现：`fk_tcp()` 由 `getLinkState(robot, ee_idx, computeForwardKinematics=1)` 的 **[4] `worldLinkFramePosition` 与 [5] 姿态四元数**合成 TCP；**[0] `linkWorldPosition` 是质心（COM）位置，仅作备查列记录**（link7 COM 到 TCP 为固定偏移约 **292.5 mm**），不得作为主判据。
 - **`ee_idx` 按 link 名反查**（`resolve_ee_index()`），不硬编码索引：官方夹爪子树裁剪后 link 索引会变化，硬编码必然出错。
 
 ### 1.3 可达性判定（两重静态判定 + 伺服跟踪判据）
@@ -68,8 +68,8 @@
 
 - **解由限位 + restPoses + 初值共同决定**——三者在脚本中全部写死，保证他人复跑得到同一组关节角（可复现性）；
 - **解连续性处理**：初值不再是固定 HOME，而是**上一点收敛后的实际关节角**（`solve_ik(..., seed=q_cur)`），避免 7 轴冗余下零空间漂移导致逐点解跳变、伺服跟踪误差变大甚至不收敛；HOME 仍作为 `restPoses` 的 nullspace 参考；
-- **两段式求解**：内置求解器在「远距离初值」下常停在 **3–8 mm 的局部解**（超过 5 mm 阈值）。因此粗解后再做一段**位置-only 数值精修**（数值雅可比 + 阻尼最小二乘，阻尼递增重试、关节角始终夹在官方限位内），实测把 5 点残差压到 **0.000–0.001 mm**。该精修不改变阈值、不改限位、不改判据，只改求解精度；
-- **j7 不可由位置约束确定**：`link7` 原点即 joint7 轴心，joint7 旋转不改变该点位置，故位置-only IK 解中 j7 保持初值（≈0）。这不影响位置误差判定，但关节角序列不唯一，答辩需说明。
+- **TCP 口径两段式求解（v8.3 修正）**：拼装后 TCP = link7 原点 + R_link7 @ `TCP_OFFSET`（0.321 m 工具偏移），TCP 位置强烈依赖腕部朝向，纯位置-only IK 的冗余分支漂移无法收敛（实测残差卡在 100–500 mm）。故 `solve_ik_tcp()` 约束抓取朝向——**工具轴（link7 +z）指向果实方位角、可按俯仰 ±网格倾斜**（果实位于握合腔内），在**确定性姿态网格**（俯仰 −75°…+45° 步长 10°、掌面绕工具轴滚转 −180°…+180° 步长 30°）内以「TCP 残差 ≤ 0.1 mm」为约束取**限位余量最大**的姿态；每次先以带姿态内置 IK 求粗解，再用 `tcp_refine()`（对 TCP 直接做数值雅可比 + 阻尼最小二乘，姿态影响由有限差分自动包含）把 TCP 残差压到 **0.000 mm**；网格无解时基准朝向兜底。该口径不改变阈值、不改限位、不改判据；
+- **j7 参与 TCP 定位**：TCP 偏移不在 joint7 轴线上，joint7 旋转会改变 TCP 位置，故 j7 由解算确定，不再保持初值。
 
 ### 2.2 URDF 运动学来源（关键工程事实）
 
@@ -96,9 +96,9 @@
 | joint6 | (-0.03325, 0, 0.035) | link6 = (-0.03325, 0, 0.4426) |
 | joint7 | (0.03325, -0.03325, 0.0555) | **link7 = (0, -0.03325, 0.4981)** |
 
-即**零位末端（link7 原点）= (0, -0.03325, 0.4981) m**，与 `handoff/演算基准.json` 的 `zero_pose.link7_tcp_m` 逐位一致（实测偏差 0.00001 mm）。`test_load.py` 以该值断言（容差 ±5 mm）——这是**自洽性自检**（验证派生 URDF 与官方 URDF 互洽、加载链路无损坏）。
+即**零位 link7 原点 = (0, -0.03325, 0.4981) m**，与 `handoff/演算基准.json` 的 `zero_pose.link7_tcp_m` 逐位一致（实测偏差 0.00001 mm）。`test_load.py` 以该值断言（容差 ±5 mm）——这是**自洽性自检**（验证派生 URDF 与官方 URDF 互洽、加载链路无损坏）。v8.3 修正口径另断言**零位 TCP（果实被持点）= (0.048, -0.03325, 0.81901) m**（= link7 原点 + TCP_OFFSET，零位朝向 R=I）。
 
-> 对照：官方 `tool_link` 原点在 (0, 0, 0.65498) m，相对 link7 有 **0.157 m** 夹爪偏移。本轮口径**不使用** `tool_link`，该数据仅作存档。
+> 对照：官方 `tool_link`（法兰转接板）原点在 (0, 0, 0.65498) m；实测其 mesh 顶面与 link7 腕筒顶面齐平（link7 系 z≈0.0907，零位世界 z≈0.5888）——**这就是末端执行器法兰面**，ORCA 手的安装基面即与此面相切（v8.3 修正挂接）。
 
 ### 2.4 两层控制结构：轨迹规划 + 关节位置伺服
 
@@ -307,7 +307,8 @@ v8.3 新增（ORCA 末端执行器，口径见 PROMPT_ORCA末端执行器_v8.3_R
   5. 在 link7 之后以 fixed joint 挂接 ORCA Hand 仿真专用子装配
      （来源 third_party/orcahand/orcahand_right_sim.urdf，由 derive_orcahand_urdf.py
      从官方 MIT 描述文件派生：惯量置零、17 个 revolute 锁定为预设握合姿态）；
-     ORCA 不进 IK 链、不改 5 个目标点、不改误差口径（判定点仍为 link7 原点）；
+     精度判定点 = TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0, 0.32091)），
+     目标点 = 果实位置（select_targets.py 按 TCP 口径重算，见 v8.3 修正）；
   6. 达妙臂主体 8 link / 7 revolute / 15 个官方保留块逐字一致的要求不变，
      新增对 ORCA 子装配（42 link / 41 fixed + 1 个挂接 fixed joint）的强校验。
 """
@@ -320,12 +321,17 @@ DROP_LINKS = {"tool_link", "gripper_left", "gripper_right"}
 DROP_JOINTS = {"tool_joint", "gripper_joint1", "gripper_joint2"}
 
 # ---- ORCA 子装配挂接参数（link7 -> orca_root，fixed） ----
-# 朝向依据（2026-11-18 实测）：官方展开 URDF 在 root 系中手指沿 +z 延伸、卷向 +y
-# （掌面朝 +y）。挂接变换将掌面转到 link7 局部 -z（果实方向）、握合腔中心对准
-# 果实保持点 link7 局部 (0, 0, -FRUIT_HELD_Z=0.03)：手指朝腕前方伸展并从上方包拢果实。
+# 依据（2026-11-18 第二次修正，按实际拼装重算）：
+#   * 法兰面：link7 腕筒顶面 = 末端执行器法兰（零位世界 z=0.5888，即 link7 系
+#     z=0.0907；官方 tool_link 转接板顶面 0.5878 与之齐平，官方夹爪即装于此面）；
+#   * 手的安装基面：官方展开 URDF 实测塔座结构最低面 z_r = -0.01821 m
+#     （PyBullet AABB），挂接时抬升该值使基面与法兰面相切（无间隙、无穿模）；
+#   * 朝向：手指延伸方向（root +z）对齐工具轴（link7 +z），即手沿法兰轴向外伸出；
+#     掌面（root +y）朝 link7 +x，握合腔位于工具轴 +x 侧（果实被持点由
+#     derive 后的 TCP 常量给出，见 damiao_reach_demo.py / select_targets.py）。
 ORCA_SIM_URDF = "third_party/orcahand/orcahand_right_sim.urdf"
-ORCA_MOUNT_XYZ = "-0.15 0 -0.06"
-ORCA_MOUNT_RPY = "1.5707963267948966 0 1.5707963267948966"
+ORCA_MOUNT_XYZ = "0 0 0.10891"                # = 法兰面 z 0.0907 + 手基面抬升 0.01821
+ORCA_MOUNT_RPY = "0 0 -1.5707963267948966"    # Rz(-90°)：root z->link7 z（工具轴），root y->link7 x
 EXPECT_ORCA_LINKS, EXPECT_ORCA_JOINTS = 42, 41
 EXPECT_ORCA_MESHES = 68
 
@@ -425,9 +431,9 @@ def main() -> int:
     orca_body = orca_body[orca_body.index(">") + 1:]          # 去掉 <robot ...> 开标签
     orca_mount = (
         "  <!-- v8.3 ORCA Hand 挂接：link7 -> orca_root（fixed，不进 IK 链）。\n"
-        "       朝向：掌面向上托住果实（握合腔开口向上），指尖自腕前方 (+x)\n"
-        "       向上包拢；握合腔中心对准果实保持点 link7 局部 (0, 0, -0.03)。\n"
-        "       偏移与旋转依据官方展开 URDF 的 root 系几何实测确定。 -->\n"
+        "       按实际拼装：手的安装基面（塔座底面，root 系 z=-0.01821）与机械臂\n"
+        "       末端法兰面（官方 tool_joint: link7 系 (0,0.03325,0.15688)）相切；\n"
+        "       手指延伸方向对齐工具轴（link7 +z），掌面朝 link7 +x。 -->\n"
         f'  <joint name="joint_orca_wrist" type="fixed">\n'
         f'    <origin xyz="{ORCA_MOUNT_XYZ}" rpy="{ORCA_MOUNT_RPY}" />\n'
         f'    <parent link="link7" />\n'
@@ -519,7 +525,7 @@ python derive_orcahand_urdf.py   --src third_party/orcahand/orcahand_right.urdf 
 python derive_damiao_urdf.py   --src ../damiao_7axis_arm/left_arm_dm/src/left_description_grip/urdf/left_description_grip.urdf   --dst damiao_reach.urdf                                  # 达妙派生 + 追加 ORCA 子装配
 ```
 
-派生内容仅三类（官方几何 mesh 与 link/joint 结构未改）：① 68 处 mesh 路径改写为工程相对路径；② 全部 `<inertial>` 惯量置零（维持 v8.2 无重力基线口径）；③ 17 个官方 revolute 锁定为 fixed（预设握合姿态，均在官方限位内；官方 URDF 无 mimic/transmission，腱绳耦合未建模）。挂接：`link7 -> orca_root`（fixed，不进 IK 链，判定点仍为 `link7` 原点）。
+派生内容仅三类（官方几何 mesh 与 link/joint 结构未改）：① 68 处 mesh 路径改写为工程相对路径；② 全部 `<inertial>` 惯量置零（维持 v8.2 无重力基线口径）；③ 17 个官方 revolute 锁定为 fixed（预设握合姿态，均在官方限位内；官方 URDF 无 mimic/transmission，腱绳耦合未建模）。挂接（v8.3 修正，按实际拼装）：`link7 -> orca_root`（fixed `joint_orca_wrist`，origin xyz=(0, 0, 0.10891)、rpy=(0, 0, -π/2)）——**手的安装基面（塔座底面，root 系 z=-0.01821）与机械臂末端法兰面（link7 腕筒顶面，link7 系 z=0.0907）相切**，手指沿工具轴（link7 +z）外伸、掌面朝 link7 +x；精度判定点为 TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0, 0.32091)）。
 
 自检输出（实测，`derive_orcahand_urdf.py`）：
 
@@ -825,7 +831,7 @@ if __name__ == "__main__":
 
 ### 步骤六：创建并运行自检脚本
 
-自检项：① URDF 可加载；② link 总数 = **49**（7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed，ORCA 不引入可动关节）；③ 达妙 7 组限位逐项等于官方值；④ 末端 link 名 = `link7` 且索引按名反查；⑤ 零位 FK 断言 = (0, -0.03325, 0.4981) m（容差 5 mm，判定点口径不变）；⑥ **ORCA 子装配断言**：42 个 `orca_*` link、挂接关节存在、惯量置零（mass=0）、碰撞过滤可屏蔽；⑦ **ORCA 包围盒断言**（≤ 0.30 m、零位不与地面穿模）；⑧ 渲染一帧验证官方 STL 显示通路。
+自检项：① URDF 可加载；② link 总数 = **49**（7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed，ORCA 不引入可动关节）；③ 达妙 7 组限位逐项等于官方值；④ 末端 link 名 = `link7` 且索引按名反查；⑤ 零位 FK 断言：link7 原点 = (0, -0.03325, 0.4981) m 且 **TCP 果实点 = (0.048, -0.03325, 0.81901) m**（容差 5 mm）；⑥ **拼装断言**：挂接 origin xyz=(0,0,0.10891)、rpy=(0,0,-π/2) 与法兰相切口径一致、惯量置零（mass=0）、碰撞过滤可屏蔽；⑦ **ORCA 包围盒断言**（≤ 0.35 m）与**相切断言**（手基面 z ≈ 法兰面 z，Δ≤1 mm）、零位不与地面穿模；⑧ 渲染一帧验证官方 STL 显示通路。
 
 ```bash
 cd damiao_reach_lab
@@ -849,18 +855,21 @@ python test_load.py
 [4] 末端 link 确认（按 link 名反查索引，不硬编码）
     达妙 link 序列: ['link1', 'link2', 'link3', 'link4', 'link5', 'link6', 'link7']
     末端 link 名 = link7，link 索引 = 6 PASS
-[5] 零位 FK 断言（理论值 (0.0, -0.03325, 0.4981) m，容差 5 mm，不含夹爪偏移；ORCA 子装配不进 IK 链，判定点口径不变）
+[5] 零位 FK 断言（容差 5 mm）：link7 原点 = (0.0, -0.03325, 0.4981)；TCP（果实被持点 = 握合腔中心）= (0.048, -0.03325, 0.81901)（零位朝向 R=I）
     link7 原点 = (0.00000, -0.03325, 0.49810)，|Δ| = 0.000 mm PASS
-    link7 COM  = (-0.04407, 0.00049, 0.54346)（备查，与原点相差属正常）
-[6] ORCA 子装配断言（固定子装配 / 惯量置零 / 碰撞过滤屏蔽）
-    orca_* link 数 = 42（期望 42）；挂接 joint = joint_orca_wrist 存在 PASS
+    TCP 果实点 = (0.04800, -0.03325, 0.81901)，|Δ| = 0.000 mm PASS
+    link7 COM  = (-0.04407, 0.00049, 0.54346)（备查）
+[6] 拼装断言（手基面与法兰面相切 / 工具轴对齐 / 挂接 origin 校验）
+    挂接 origin xyz = 0 0 0.10891（期望 (0.0, 0.0, 0.10891)）PASS
+    挂接 rpy = 0 0 -1.5707963267948966（期望 (0.0, 0.0, -1.5707963267948966)）PASS
     ORCA link 质量: 全部 = 0.0 kg（惯量置零口径）PASS
     碰撞过滤: 42 个 ORCA link 已设 group=2/mask=0（不参与仿真接触）PASS
-[7] ORCA 包围盒断言（零位、世界系）
-    包围盒 min=[-0.15, -0.0733, 0.4381] max=[0.1064, 0.0266, 0.5187]
-    尺寸 = [0.2564, 0.0998, 0.0806] m（≤ 0.3 m；官方几何实测约 0.098×0.109×0.157 m）PASS
-    零位最低点 z = 0.4381 m > 0（不与地面穿模）PASS
-[8] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）
+[7] ORCA 包围盒与相切断言（零位、世界系）
+    包围盒 min=[-0.0955, -0.1372, 0.5888] max=[0.1166, 0.0631, 0.8873]
+    尺寸 = [0.2121, 0.2002, 0.2985] m（≤ 0.35 m）PASS
+    手基面 z = 0.58880 m ≈ 法兰面 z = 0.58880 m（相切，Δ≤1 mm）PASS
+    零位最低点 z = 0.5888 m > 0（不与地面穿模）PASS
+[9] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）
     帧缓冲 307200 bytes（= 320×240×4，非零即渲染通路正常）
 == ALL PASS ==
 ```
@@ -877,18 +886,22 @@ python test_load.py
      （官方夹爪子树已裁剪；ORCA 为固定子装配，不引入任何可动关节）；
   3) 达妙 7 个关节限位逐项等于官方 URDF <limit>；
   4) 末端 link 名 = link7，且其 link 索引按名反查得到（不硬编码）；
-  5) 零位 FK 断言 = (0, -0.03325, 0.4981) m，容差 5 mm
-     （与 handoff/演算基准.json 的 zero_pose.link7_tcp_m 一致；
-     精度判定点仍为 link7 原点，ORCA 子装配不进 IK 链、不改变该口径）；
-  6) ORCA 子装配断言：42 个 orca_* link、挂接 joint_orca_wrist 存在、
-     全部 ORCA link 惯量置零（mass=0，符合 v8.3 默认口径）、
-     碰撞过滤可按组屏蔽（不参与仿真接触）；
-  7) ORCA 包围盒断言：整体尺寸与官方实测一致量级（≤ 0.30 m），且零位时不与地面穿模；
-  8) 渲染一帧验证官方 STL 显示通路正常（达妙 + ORCA）。
+  5) 零位 FK 断言：link7 原点 = (0, -0.03325, 0.4981) m，且
+     **TCP（果实被持点 = ORCA 握合腔中心）= (0.048, -0.03325, 0.81901) m**（容差 5 mm；
+     v8.3 修正口径：判定点为 TCP，零位 TCP = link7 原点 + TCP_OFFSET，零位朝向 R=I）；
+  6) 拼装断言：挂接 joint_orca_wrist 的 origin 与「手基面与法兰面相切」口径一致
+     （URDF 文本校验 xyz=(0,0,0.10891)、rpy=(0,0,-π/2)；法兰面 = link7 系 z=0.0907，
+     手基面 = 塔座底面 root 系 z=-0.01821）；
+  7) ORCA 子装配断言：42 个 orca_* link、全部 ORCA link 惯量置零（mass=0）、
+     碰撞过滤可按组屏蔽（不参与仿真接触）、零位时手基面与法兰面相切（AABB Δ≤1 mm）；
+  8) ORCA 包围盒断言（≤ 0.35 m）且不与地面穿模；
+  9) 渲染一帧验证官方 STL 显示通路正常（达妙 + ORCA）。
 """
 import math
+import re
 import sys
 
+import numpy as np
 import pybullet as p
 import pybullet_data
 
@@ -901,16 +914,20 @@ EXPECT_LIMITS = [
     (-1.3264502315156903, 1.3264502315156903),
     (-1.335176877775662, 1.335176877775662),
 ]
-# 零位 link7 原点（官方 URDF 链式变换推导，与演算基准.json link7_tcp_m 一致）
+# 零位 link7 原点（官方 URDF 链式变换推导）与零位 TCP（= 原点 + TCP_OFFSET，R=I）
 EXPECT_HOME_EE = (0.0, -0.03325, 0.4981)
+TCP_OFFSET = (0.048, 0.0, 0.32091)
+EXPECT_HOME_TCP = tuple(round(a + b, 6) for a, b in zip(EXPECT_HOME_EE, TCP_OFFSET))
 EXPECT_EE_NAME = "link7"
 EXPECT_N_LINKS = 49            # 7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed
 EXPECT_N_REVOLUTE = 7
 EXPECT_N_ORCA = 42             # orca_ 前缀 link 数
 ORCA_PREFIX = "orca_"
 ORCA_MOUNT_JOINT = "joint_orca_wrist"
+ORCA_MOUNT_XYZ = (0.0, 0.0, 0.10891)      # 法兰面 z 0.0907 + 手基面抬升 0.01821
+ORCA_MOUNT_RPY = (0.0, 0.0, -1.5707963267948966)
 ORCA_COLLISION_GROUP, ORCA_COLLISION_MASK = 2, 0
-ORCA_MAX_SPAN = 0.30           # 官方几何实测约 0.098 × 0.109 × 0.157 m，取 0.30 m 为断言上限
+ORCA_MAX_SPAN = 0.35           # 手沿工具轴总长约 0.275 m，取 0.35 m 为断言上限
 TOL = 0.005
 
 
@@ -957,26 +974,42 @@ def main() -> int:
         print("== FAILED（末端 link 未找到）==")
         return 1
 
-    print(f"[5] 零位 FK 断言（理论值 {EXPECT_HOME_EE} m，容差 5 mm，不含夹爪偏移；"
-          f"ORCA 子装配不进 IK 链，判定点口径不变）")
+    print(f"[5] 零位 FK 断言（容差 5 mm）：link7 原点 = {EXPECT_HOME_EE}；"
+          f"TCP（果实被持点 = 握合腔中心）= {EXPECT_HOME_TCP}（零位朝向 R=I）")
     for i in range(7):
         p.resetJointState(robot, i, 0.0)
     ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
-    ee_frame = ls[4]   # worldLinkFramePosition：URDF link 原点（主口径）
-    ee_com = ls[0]     # linkWorldPosition：COM（备查口径）
+    ee_frame = ls[4]
+    ee_com = ls[0]
+    R = np.array(p.getMatrixFromQuaternion(ls[5])).reshape(3, 3)
+    tcp = np.array(ee_frame) + R @ np.array(TCP_OFFSET)
     err = math.dist(ee_frame, EXPECT_HOME_EE)
-    ok &= err <= TOL
+    err_tcp = math.dist(tcp, EXPECT_HOME_TCP)
+    ok &= err <= TOL and err_tcp <= TOL
     print(f"    link7 原点 = ({ee_frame[0]:.5f}, {ee_frame[1]:.5f}, {ee_frame[2]:.5f})，"
           f"|Δ| = {err * 1000:.3f} mm {'PASS' if err <= TOL else 'FAIL'}")
-    print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查，与原点相差属正常）")
+    print(f"    TCP 果实点 = ({tcp[0]:.5f}, {tcp[1]:.5f}, {tcp[2]:.5f})，"
+          f"|Δ| = {err_tcp * 1000:.3f} mm {'PASS' if err_tcp <= TOL else 'FAIL'}")
+    print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查）")
 
-    print("[6] ORCA 子装配断言（固定子装配 / 惯量置零 / 碰撞过滤屏蔽）")
+    print("[6] 拼装断言（手基面与法兰面相切 / 工具轴对齐 / 挂接 origin 校验）")
     orca_idx = [i for i in range(n) if link_names[i].startswith(ORCA_PREFIX)]
-    mount_ok = any(p.getJointInfo(robot, i)[1].decode() == ORCA_MOUNT_JOINT for i in range(n))
-    ok &= len(orca_idx) == EXPECT_N_ORCA and mount_ok
-    print(f"    orca_* link 数 = {len(orca_idx)}（期望 {EXPECT_N_ORCA}）；"
-          f"挂接 joint = {ORCA_MOUNT_JOINT} {'存在' if mount_ok else '缺失'} "
-          f"{'PASS' if len(orca_idx) == EXPECT_N_ORCA and mount_ok else 'FAIL'}")
+    with open("damiao_reach.urdf", "r", encoding="utf-8") as f:
+        urdf_text = f.read()
+    jm = re.search(r'<joint name="joint_orca_wrist" type="fixed">.*?'
+                   r'<origin xyz="([^"]+)" rpy="([^"]+)"', urdf_text, re.S)
+    xyz_ok = rpy_ok = False
+    if jm:
+        xyz = tuple(float(v) for v in jm.group(1).split())
+        rpy = tuple(float(v) for v in jm.group(2).split())
+        xyz_ok = all(abs(a - b) < 1e-6 for a, b in zip(xyz, ORCA_MOUNT_XYZ))
+        rpy_ok = all(abs(a - b) < 1e-6 for a, b in zip(rpy, ORCA_MOUNT_RPY))
+    ok &= jm is not None and xyz_ok and rpy_ok
+    print(f"    挂接 origin xyz = {jm.group(1) if jm else '缺失'}（期望 {ORCA_MOUNT_XYZ}）"
+          f"{'PASS' if xyz_ok else 'FAIL'}")
+    print(f"    挂接 rpy = {jm.group(2) if jm else '缺失'}（期望 {ORCA_MOUNT_RPY}）"
+          f"{'PASS' if rpy_ok else 'FAIL'}")
+
     masses = [p.getDynamicsInfo(robot, i)[0] for i in orca_idx]
     zero_mass = all(m == 0.0 for m in masses)
     ok &= zero_mass
@@ -986,23 +1019,27 @@ def main() -> int:
     print(f"    碰撞过滤: {len(orca_idx)} 个 ORCA link 已设 group={ORCA_COLLISION_GROUP}/"
           f"mask={ORCA_COLLISION_MASK}（不参与仿真接触）PASS")
 
-    print("[7] ORCA 包围盒断言（零位、世界系）")
+    print("[7] ORCA 包围盒与相切断言（零位、世界系）")
     mins = [1e9] * 3
     maxs = [-1e9] * 3
     for i in orca_idx:
-        pos = p.getLinkState(robot, i, computeForwardKinematics=1)[4]
-        mins = [min(a, b) for a, b in zip(mins, pos)]
-        maxs = [max(a, b) for a, b in zip(maxs, pos)]
+        aabb = p.getAABB(robot, i)
+        mins = [min(a, b) for a, b in zip(mins, aabb[0])]
+        maxs = [max(a, b) for a, b in zip(maxs, aabb[1])]
     span = [hi - lo for lo, hi in zip(mins, maxs)]
     span_ok = all(s <= ORCA_MAX_SPAN for s in span)
     above_ground = mins[2] > 0.0
-    ok &= span_ok and above_ground
+    # 相切断言：手 AABB 最低面（世界 z）≈ 法兰面 = 零位 link7 原点 z + 0.0907
+    flange_z = EXPECT_HOME_EE[2] + 0.0907
+    tangent = abs(mins[2] - flange_z) <= 0.001
+    ok &= span_ok and above_ground and tangent
     print(f"    包围盒 min={[round(v, 4) for v in mins]} max={[round(v, 4) for v in maxs]}")
-    print(f"    尺寸 = {[round(s, 4) for s in span]} m（≤ {ORCA_MAX_SPAN} m；官方几何实测约 0.098×0.109×0.157 m）"
-          f"{'PASS' if span_ok else 'FAIL'}")
+    print(f"    尺寸 = {[round(s, 4) for s in span]} m（≤ {ORCA_MAX_SPAN} m）{'PASS' if span_ok else 'FAIL'}")
+    print(f"    手基面 z = {mins[2]:.5f} m ≈ 法兰面 z = {flange_z:.5f} m（相切，Δ≤1 mm）"
+          f"{'PASS' if tangent else 'FAIL'}")
     print(f"    零位最低点 z = {mins[2]:.4f} m > 0（不与地面穿模）{'PASS' if above_ground else 'FAIL'}")
 
-    print("[8] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）")
+    print("[9] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）")
     view = p.computeViewMatrixFromYawPitchRoll(
         cameraTargetPosition=(0.15, 0.0, 0.25), distance=1.2,
         yaw=50, pitch=-25, roll=0, upAxisIndex=2)
@@ -1036,7 +1073,7 @@ if __name__ == "__main__":
 | HOME | `[0, -0.5, -1.0, 0, 0.5, 0]` | 官方零位 `[0]*7` |
 | LIMITS | xArm6 官方 6 组 | **达妙官方 7 组** |
 | FORCES | 163.2/163.2/81.6/81.6/30.6/30.6 | **50/50/50/50/12/12/12 N·m** |
-| TARGETS | (0.45,0,0.40) 等 5 点 | **重选 5 点**（官方几何可达空间内） |
+| TARGETS | (0.45,0,0.40) 等 5 点 | **v8.3 修正：按 TCP（果实被持点）口径重选 5 个果实点**（P1 (0.4196,0.0078,0.3354) 等，见 §8.3 表） |
 | 预筛包络 | r ≤ 0.70 m、z ∈ [0.10, 0.75] | **r ≤ 0.389 m、z ∈ [-0.111, 0.507]** |
 | IK | 内置单次 | **内置粗解 + 位置-only 数值精修**；初值 = 上一点实际关节角 |
 | CSV 字段 | q1–q6（20 列） | **q1–q7（21 列）** |
@@ -1051,13 +1088,21 @@ if __name__ == "__main__":
 damiao_reach_demo.py - 达妙七轴谐波机械臂 草莓定点到达仿真
                       （位置-only IK + 梯形轨迹 + 位置伺服执行）。
 
-v8.3（2026-11-18，ORCA Hand 末端执行器版）：
+v8.3（2026-11-18，ORCA Hand 末端执行器版；同日两次按用户指正修正）：
   * 课设立论 = 仿生机械臂本体；末端执行器为可替换模块。
   * 末端执行器换成 ORCA Hand 官方 URDF（srl-ethz/orcahand_description，MIT）：
     以 fixed joint 挂接在 link7 之后（joint_orca_wrist），作为固定子装配呈现——
-    惯量置零、17 个 revolute 锁定为预设握合姿态、不参与仿真接触（碰撞过滤关闭）；
-    不进 IK 链、不改 5 个目标点、不改误差口径（判定点仍为 link7 原点）。
+    惯量置零、17 个 revolute 锁定为预设握合姿态、不参与仿真接触（碰撞过滤关闭）。
     腱绳耦合未在官方 URDF 中建模，本仿真不含腱绳驱动、接触力学与夹持力。
+  * 按实际拼装重算（用户指正：① 手基面须与机械臂末端法兰相切；② 拼装后到达
+    果实位置的是末端执行器而非法兰原点）：
+      - 挂接：手安装基面（塔座底面）与 link7 腕筒法兰面（z=0.0907）相切，
+        手指延伸方向对齐工具轴（link7 +z），掌面朝 link7 +x；
+      - 判定点改为 **TCP = 果实被持点 = ORCA 握合腔中心**（link7 系 TCP_OFFSET）；
+      - 目标点 = 果实位置，由 select_targets.py 按 TCP 口径重算（预筛包络
+        同步改为果实点云实测：前方带 x≥0.25、z∈[0.12,0.45]、r≤0.55）；
+      - IK 加 TCP 外环（solve_ik_tcp）：内环仍为两段式位置-only IK，外环按
+        TCP 残差修正 link7 目标。
   * v8.2 的卷曲仿生章鱼爪演示层保留为 --legacy-tentacle 分支（默认关闭），
     保证 v8.2 可复现；果实搬运在两种模式下都是纯视觉移动，不写 CSV、不参与判定。
 
@@ -1098,27 +1143,35 @@ LIMITS = [(-2.827, 2.827),                    # 官方 URDF <limit>（与 README
           (-1.3264502315156903, 1.3264502315156903),
           (-1.335176877775662, 1.335176877775662)]
 FORCES = [50.0, 50.0, 50.0, 50.0, 12.0, 12.0, 12.0]   # N·m，取自官方 URDF <limit effort>
-TARGETS = [                                    # 按「官方限位 + 官方几何」重扫可达空间后重选
-    ("P1", (0.2258, -0.0060, 0.3250)),         # IK 残差 0.000 mm，限位余量 0.408 rad
-    ("P2", (0.2176, 0.1206, 0.2386)),          # 0.001 mm / 0.188 rad
-    ("P3", (0.1742, -0.1081, 0.2361)),         # 0.000 mm / 0.342 rad
-    ("P4", (0.2652, 0.0647, 0.3954)),          # 0.000 mm / 0.716 rad
-    ("P5", (0.2747, -0.0486, 0.1567)),         # 0.000 mm / 0.652 rad
+TARGETS = [                                    # v8.3 修正：TCP（果实被持点）口径，select_targets.py 重算
+    ("P1", (0.4196, 0.0078, 0.3354)),          # TCP 残差 0.000 mm，限位余量 0.226 rad
+    ("P2", (0.3614, 0.1476, 0.2506)),          # 0.000 mm / 0.181 rad
+    ("P3", (0.3726, -0.1973, 0.2630)),         # 0.000 mm / 0.167 rad
+    ("P4", (0.4794, 0.0654, 0.4014)),          # 0.000 mm / 0.522 rad
+    ("P5", (0.4618, -0.0564, 0.1786)),         # 0.000 mm / 0.165 rad
 ]
-RADIUS_MAX, Z_MIN, Z_MAX = 0.389, -0.111, 0.507   # IK 前预筛：link7 实测可达包络
-                                              # （handoff/演算基准.json workspace.link7，6000 组采样）
+# ---- v8.3 修正口径：精度判定点 = TCP（果实被持点 = ORCA 握合腔中心） ----
+# 按实际拼装重算：手基面与 link7 法兰面相切、手指沿工具轴外伸后，握合腔中心位于
+# link7 系 (0.048, 0, 0.32091)（官方展开 URDF 几何实测：掌面与卷曲指尖之间）。
+# 判定/预筛/伺服误差全部以 TCP 为口径（用户 2026-11-18 指正后修正）。
+TCP_OFFSET = (0.048, 0.0, 0.32091)             # TCP = link7 原点 + R_link7 @ TCP_OFFSET
+TCP_TOL = 1e-6                                 # TCP 数值精修收敛容差（tcp_refine 内部）
+# 果实点预筛包络（TCP 可达云实测，40000 组限位内采样，seed 20261118）：
+# 基座前方带 x≥0.25、z∈[0.12,0.45]、r≤0.55；对应 link7 实测 r≤0.388、z∈[-0.031,0.487]，
+# 即臂本体仍在官方可达包络（r≤0.389、z∈[-0.111,0.507]）内。
+X_MIN, RADIUS_MAX, Z_MIN, Z_MAX = 0.25, 0.55, 0.12, 0.45
 IK_MAX_ITER, IK_TOL = 200, 1e-5                # IK 迭代上限与残差阈值
 SIM_HZ = 240                                    # 仿真步频（setTimeStep 真实生效）
 ANIM_STEPS, HOLD_STEPS = 480, 480              # 轨迹段 2 s + 到位保持段 2 s（含收敛观察窗）
 STEADY_N = 60                                   # 收敛判据：连续 60 步（0.25 s）达标
 SERVO_MAX_STEPS = 3000                          # 每点伺服总步数上限（超时兜底 12.5 s，非收敛判据）
 POS_GAIN, VEL_GAIN = 1.0, 1.0                  # 伺服增益（无重力设定下的验证基线，依据见附录 B/C）
-BAD_POINT_H = (0.80, 0.00, 0.30)               # 负向验证：水平越界（0.80 m > 0.389 m）
-BAD_POINT_Z = (0.20, 0.00, 0.80)               # 负向验证：z 越界（0.80 m > 0.507 m）
+BAD_POINT_H = (0.80, 0.00, 0.30)               # 负向验证：水平越界（0.80 m > 0.55 m）
+BAD_POINT_Z = (0.40, 0.00, 0.80)               # 负向验证：z 越界（0.80 m > 0.45 m）
 
 # ---------------- 演示层抓放循环（视觉示意，不参与误差判定；来源见指导书附录 B） ----------------
 BASKET_CENTER = (0.16, -0.25, 0.08)             # 篮子中心（m），基座右前方近地面
-BASKET_DROP = (0.16, -0.25, 0.24)              # 放果点：末端下降示意「低头放果」（位置-only IK，不约束姿态）
+BASKET_DROP = (0.30, -0.26, 0.24)              # 放果点：TCP（果实被持点）到达的篮口上方点（TCP-IK，不约束姿态）
 BASKET_HALF = (0.09, 0.09, 0.055)               # 篮子内腔半尺寸（m）
 PLACE_STEPS, PLACE_HOLD = 480, 120              # 放果轨迹 2 s + 入篮保持 0.5 s（@240 Hz）
 FRUIT_SLOTS = [                                 # 5 颗果实在篮内的留存位置（m）
@@ -1141,12 +1194,12 @@ SPIRAL_A = 0.010                                   # 螺旋起始半径 (m，示
 SPIRAL_B = 0.22                                    # 螺旋增长系数 (示意)
 SPIRAL_THETA_MAX = 2.4 * math.pi                   # 卷曲总转角 (rad，示意，约 1.2 圈)
 COIL_BACK_Z = 0.050                                # 卷曲态向末端后方抬升 (m，示意)
-# ---- 末端演示层避让参数（与 v8.3 ORCA 挂接同口径，2026-11-18 用户诊断后修正） ----
+# ---- 末端演示层避让参数（仅 --legacy-tentacle 分支使用） ----
 # 干涉根因：缠绕环心原压在被测点（球心 = link7 原点），环半径 0.033 m 而 link7 网格
 #（含相机安装板）分布于原点周围 → 环陷入 URDF 网格，看似「装反」。
-# 修正：爪体（掌心）挂到网格之外，缠绕环心对准果实保持点（局部 -z 0.03 m），
-# 判定点仍为 link7 原点，不重算（与 v8.3「不进 IK 链、不改误差口径」一致）。
-FRUIT_HELD_Z = 0.03                             # 果实保持点：link7 局部 -z 方向偏移（m，v8.3 ORCA 同口径）
+# 修正：爪体（掌心）挂到网格之外，缠绕环心对准果实保持点（局部 -z 0.03 m）。
+# v8.3 修正后精度判定点为 TCP（果实被持点），本分支的缠绕环心仅供 v8.2 演示复现。
+FRUIT_HELD_Z = 0.03                             # 果实保持点：link7 局部 -z 偏移（m；仅 --legacy-tentacle 分支缠绕环心用）
 TENTACLE_PALM_XYZ = (-0.10, 0.0, -0.03)         # 触手掌心：link7 局部坐标（避开 link7 网格，与 ORCA 挂接同侧）
 WRAP_R = 0.033                                     # 包覆球面半径 (m，略大于果实半径 0.025)
 WRAP_PHI0, WRAP_PHI1 = 0.18 * math.pi, 0.96 * math.pi   # 球顶到球底极角范围 (示意)
@@ -1208,7 +1261,8 @@ def read_orca_official_inertials(path=ORCA_OFFICIAL_URDF):
 
 
 def precheck(point, name):
-    """预筛：水平半径与高度。越界即退出码 2（在 IK 前快速失败）。"""
+    """预筛（TCP=果实被持点口径）：前方带 x≥X_MIN、水平半径 r≤RADIUS_MAX、高度窗。
+    越界即退出码 2（在 IK 前快速失败）。"""
     rho = math.hypot(point[0], point[1])
     if rho > RADIUS_MAX:
         print(f"[预筛拒绝] {name} 水平距离 {rho:.3f} m > {RADIUS_MAX} m，IK 前中止。")
@@ -1216,6 +1270,9 @@ def precheck(point, name):
         raise SystemExit(2)
     if not (Z_MIN <= point[2] <= Z_MAX):
         print(f"[预筛拒绝] {name} z={point[2]:.3f} m 不在 [{Z_MIN},{Z_MAX}]，IK 前中止。")
+        raise SystemExit(2)
+    if point[0] < X_MIN:
+        print(f"[预筛拒绝] {name} x={point[0]:.3f} m < 前方带 {X_MIN} m，IK 前中止。")
         raise SystemExit(2)
 
 
@@ -1304,9 +1361,155 @@ def check_limits(q):
 
 
 def fk_ee(robot, ee_idx):
-    """FK 复核：返回 (link7 原点, link7 COM)。主口径为原点（URDF frame，与 IK 参考系一致）。"""
+    """FK 复核：返回 (link7 原点, link7 COM)。备查口径（判定点已改为 TCP）。"""
     ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
     return ls[4], ls[0]
+
+
+def fk_tcp(robot, ee_idx):
+    """TCP = 果实被持点（ORCA 握合腔中心）= link7 原点 + R_link7 @ TCP_OFFSET。
+    返回 (tcp 位置, link7 旋转矩阵, link7 原点)。主误差口径。"""
+    ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
+    R = np.array(p.getMatrixFromQuaternion(ls[5])).reshape(3, 3)
+    return np.array(ls[4]) + R @ np.array(TCP_OFFSET), R, np.array(ls[4])
+
+
+def quat_from_matrix(R):
+    """旋转矩阵 → 四元数 [x,y,z,w]（标准 Shepperd 法，数值稳定分支）。"""
+    m = R
+    tr = m[0, 0] + m[1, 1] + m[2, 2]
+    if tr > 0:
+        s = math.sqrt(tr + 1.0) * 2
+        return [(m[2, 1] - m[1, 2]) / s, (m[0, 2] - m[2, 0]) / s, (m[1, 0] - m[0, 1]) / s, 0.25 * s]
+    if m[0, 0] >= m[1, 1] and m[0, 0] >= m[2, 2]:
+        s = math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
+        return [0.25 * s, (m[0, 1] + m[1, 0]) / s, (m[0, 2] + m[2, 0]) / s, (m[2, 1] - m[1, 2]) / s]
+    if m[1, 1] >= m[2, 2]:
+        s = math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
+        return [(m[0, 1] + m[1, 0]) / s, 0.25 * s, (m[1, 2] + m[2, 1]) / s, (m[0, 2] - m[2, 0]) / s]
+    s = math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
+    return [(m[0, 2] + m[2, 0]) / s, (m[1, 2] + m[2, 1]) / s, 0.25 * s, (m[1, 0] - m[0, 1]) / s]
+
+
+def tcp_refine(robot, ee_idx, fruit, q, iters=80, eps=1e-5, tol=1e-6):
+    """TCP 数值精修：对 TCP（果实被持点）位置做数值雅可比 + 阻尼最小二乘。
+
+    与 refine_ik() 同一套阻尼策略，区别仅在 FK 用 TCP（含姿态对 0.321 m 偏移的
+    影响，由有限差分自动包含）；关节角始终夹在官方限位内。
+    """
+    q = list(q)
+    set_joints(robot, q)
+    err = math.dist(fk_tcp(robot, ee_idx)[0], fruit)
+    for _ in range(iters):
+        if err <= tol:
+            break
+        tcp0, _, _ = fk_tcp(robot, ee_idx)
+        J = np.zeros((3, NDOF))
+        for k in range(NDOF):
+            qk = list(q)
+            qk[k] = min(max(qk[k] + eps, LIMITS[k][0]), LIMITS[k][1])
+            set_joints(robot, qk)
+            J[:, k] = (fk_tcp(robot, ee_idx)[0] - tcp0) / eps
+        set_joints(robot, q)
+        improved = False
+        for trial in range(8):
+            lam = 1e-7 * (10 ** trial)
+            try:
+                dq = J.T @ np.linalg.solve(J @ J.T + lam * np.eye(3), np.array(fruit) - tcp0)
+            except np.linalg.LinAlgError:
+                continue
+            qn = [min(max(q[i] + dq[i], LIMITS[i][0]), LIMITS[i][1]) for i in range(NDOF)]
+            set_joints(robot, qn)
+            en = math.dist(fk_tcp(robot, ee_idx)[0], fruit)
+            if en < err - 1e-12:
+                q, err = qn, en
+                improved = True
+                break
+        if not improved:
+            break
+    set_joints(robot, q)
+    return q, err
+
+
+def tcp_orientation_matrix(fruit, tilt_deg, roll_deg):
+    """抓取朝向：工具轴（link7 +z）水平方位角指向果实、抬升 tilt_deg；
+    掌面（link7 +x）以 -z 为基准绕工具轴滚转 roll_deg。返回 R_des。"""
+    fruit = np.array(fruit, dtype=float)
+    psi = math.atan2(fruit[1], fruit[0])
+    uh = np.array([math.cos(psi), math.sin(psi), 0.0])
+    th = math.radians(tilt_deg)
+    u = uh * math.cos(th) + np.array([0.0, 0.0, 1.0]) * math.sin(th)
+    base = np.array([0.0, 0.0, -1.0])
+    base -= u * (base @ u)
+    if np.linalg.norm(base) < 1e-6:
+        base = np.array([1.0, 0.0, 0.0])
+    base /= np.linalg.norm(base)
+    v = np.cross(u, base)
+    rd = math.radians(roll_deg)
+    x_l = base * math.cos(rd) + v * math.sin(rd)
+    z_l = u
+    y_l = np.cross(z_l, x_l)
+    return np.column_stack([x_l, y_l, z_l])
+
+
+def solve_tcp_pose(robot, ee_idx, fruit, tilt_deg, roll_deg, seed=None):
+    """固定朝向（tilt/roll）下的 TCP-IK：带姿态粗解 + TCP 数值精修。返回 (q, tcp 残差)。"""
+    fruit = np.array(fruit, dtype=float)
+    R_des = tcp_orientation_matrix(fruit, tilt_deg, roll_deg)
+    quat = quat_from_matrix(R_des)
+    pos7 = fruit - R_des @ np.array(TCP_OFFSET)
+    seed_list = list(seed) if seed is not None else list(HOME)
+    set_joints(robot, seed_list)
+    q = list(p.calculateInverseKinematics(
+        robot, ee_idx, list(pos7), quat,
+        lowerLimits=[lo for lo, _ in LIMITS],
+        upperLimits=[hi for _, hi in LIMITS],
+        jointRanges=[hi - lo for lo, hi in LIMITS],
+        restPoses=seed_list,
+        maxNumIterations=IK_MAX_ITER,
+        residualThreshold=IK_TOL,
+    )[:NDOF])
+    return tcp_refine(robot, ee_idx, fruit, q)
+
+
+def solve_ik_tcp(robot, ee_idx, fruit, seed=None, search_orientation=False):
+    """TCP 口径 IK（v8.3 修正，带姿态约束）。
+
+    拼装后握合腔中心在工具轴上 0.321 m、掌面侧 0.048 m 处，TCP 位置强烈依赖
+    link7 朝向；纯位置-only IK 无法收敛（冗余分支漂移，实测残差 100–500 mm）。
+    故约束抓取朝向（工具轴指向果实）并用带姿态 IK 出粗解、tcp_refine() 对 TCP
+    数值精修（姿态影响由差分自动包含）。
+
+    search_orientation=True（主实验用）：在确定性网格
+    tilt ∈ [-75°, +45°] 步长 10°、roll ∈ [-180°, +180°) 步长 30° 内，
+    以「TCP 残差 ≤ 0.1 mm」为约束、取**限位余量最大**的姿态（避免腕部贴限位）；
+    网格与次序写死，结果可复现。False（选点等批量场景）：仅用基准朝向 tilt=0/roll=0。
+    返回 (q, tcp 残差)。"""
+    if not search_orientation:
+        q, err = solve_tcp_pose(robot, ee_idx, fruit, 0, 0, seed=seed)
+        if err > 1e-3 and seed is not None:            # 确定性回退 HOME 重解
+            q2, err2 = solve_tcp_pose(robot, ee_idx, fruit, 0, 0, seed=None)
+            if err2 < err:
+                q, err = q2, err2
+        set_joints(robot, q)
+        return q, err
+
+    best = None                                          # (margin, tilt, roll, q, err)
+    for tilt in range(-75, 46, 10):
+        for roll in range(-180, 180, 30):
+            q, err = solve_tcp_pose(robot, ee_idx, fruit, tilt, roll, seed=None)
+            if err > 1e-3:
+                continue
+            margin = min(min(q[i] - LIMITS[i][0], LIMITS[i][1] - q[i]) for i in range(NDOF))
+            if best is None or margin > best[0] + 1e-9:
+                best = (margin, tilt, roll, q, err)
+    if best is None:                                     # 网格内无可行解 → 基准朝向兜底
+        q, err = solve_tcp_pose(robot, ee_idx, fruit, 0, 0, seed=seed)
+        set_joints(robot, q)
+        return q, err
+    _, _, _, q, err = best
+    set_joints(robot, q)
+    return q, err
 
 
 def trap_profile(n):
@@ -1385,9 +1588,10 @@ def main():
     orca_mass_total = sum(p.getDynamicsInfo(robot, i)[0] for i in orca_idx)
     print(f"[模型] 达妙七轴派生 URDF 加载成功，末端 link = {EE_NAME}，link 索引 = {ee_idx}，"
           f"link 总数 = {p.getNumJoints(robot)}（其中 ORCA 子装配 {len(orca_idx)} 个）")
-    print(f"[末端] ORCA Hand 固定子装配：惯量置零合计 {orca_mass_total:.3f} kg，"
-          f"碰撞过滤 group={ORCA_COLLISION_GROUP}/mask={ORCA_COLLISION_MASK}（不参与接触），"
-          f"17 个 revolute 锁定为预设握合姿态（不进 IK 链、不参与判定）")
+    print(f"[末端] ORCA Hand 固定子装配：基面与法兰相切、沿工具轴外伸；惯量置零合计 "
+          f"{orca_mass_total:.3f} kg，碰撞过滤 group={ORCA_COLLISION_GROUP}/"
+          f"mask={ORCA_COLLISION_MASK}（不参与接触），17 个 revolute 锁定为预设握合姿态；"
+          f"判定点 = TCP（果实被持点 = 握合腔中心，link7 系 {TCP_OFFSET}）")
     if args.with_orca_mass:                           # 官方质量注入（仅本模式）
         official = read_orca_official_inertials()
         for i in orca_idx:
@@ -1535,10 +1739,16 @@ def main():
         不写 rows、不参与误差判定、不改阈值与限位；--no-video 下伺服与视觉搬运仍完整执行。
         """
         nonlocal tentacle_t
-        q_drop = solve_ik(robot, ee_idx, BASKET_DROP, seed=q_start)
+        # 果实被持点偏移：默认 = TCP_OFFSET（ORCA 握合腔中心）；--legacy-tentacle 分支保持
+        # v8.2 口径（link7 局部 -z FRUIT_HELD_Z，缠绕环心）。
+        hold_off = np.array([0.0, 0.0, -FRUIT_HELD_Z]) if args.legacy_tentacle \
+            else np.array(TCP_OFFSET)
+        q_drop, drop_err = solve_ik_tcp(robot, ee_idx, BASKET_DROP, seed=q_start,
+                                        search_orientation=True)
         for j in range(NDOF):
             p.resetJointState(robot, j, q_drop[j])
-        drop_err = math.dist(fk_ee(robot, ee_idx)[0], BASKET_DROP)
+        tcp_d, _, _ = fk_tcp(robot, ee_idx)
+        drop_err = math.dist(tcp_d, BASKET_DROP)
         drop_in_lim, _ = check_limits(q_drop)
         for j in range(NDOF):                         # 放果段起始 = 当前草莓点伺服后的姿态
             p.resetJointState(robot, j, q_start[j])
@@ -1552,8 +1762,8 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, R = ee_pose()        # 果实搬运至保持点（局部 -FRUIT_HELD_Z，v8.3 ORCA 同口径）
-            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
+            pos, R = ee_pose()        # 果实搬运至被持点（默认 = TCP 握合腔中心；legacy = 局部 -z）
+            fp = pos + R @ hold_off
             p.resetBasePositionAndOrientation(ball_ids[name],
                                               [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
@@ -1567,8 +1777,8 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, R = ee_pose()        # 果实搬运至保持点（局部 -FRUIT_HELD_Z，v8.3 ORCA 同口径）
-            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
+            pos, R = ee_pose()        # 果实搬运至被持点（默认 = TCP 握合腔中心；legacy = 局部 -z）
+            fp = pos + R @ hold_off
             p.resetBasePositionAndOrientation(ball_ids[name],
                                               [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
@@ -1589,18 +1799,19 @@ def main():
         p.resetJointState(robot, i, HOME[i])
     t_total0 = time.perf_counter()
 
-    print(f"{'点':4s} {'目标(m)':22s} {'IK残差(mm)':>11s} {'伺服误差(mm)':>12s} "
+    print(f"{'点':4s} {'果实点TCP(m)':22s} {'TCP-IK残差(mm)':>13s} {'TCP伺服误差(mm)':>14s} "
           f"{'COM(mm)':>9s} {'限位':4s} {'收敛步':>6s} {'结论':6s}")
     for name, target in TARGETS:
         precheck(target, name)
 
-        # ---- 静态判定：IK 求解 + FK 残差 + 限位 ----
-        q = solve_ik(robot, ee_idx, target, seed=q_cur)   # 以上一点实际关节角作初值（解连续性）
+        # ---- 静态判定：TCP-IK 求解 + TCP 残差 + 限位 ----
+        # TCP-IK：确定性姿态网格内取限位余量最大者（避免腕部贴限位）；q_cur 仅作兜底种子
+        q, err_ik = solve_ik_tcp(robot, ee_idx, target, seed=q_cur, search_orientation=True)
         for j in range(NDOF):                         # 设置 IK 解测静态残差
             p.resetJointState(robot, j, q[j])
+        tcp_static, _, pos7 = fk_tcp(robot, ee_idx)
         ee_frame, ee_com = fk_ee(robot, ee_idx)
-        err_ik = math.dist(ee_frame, target)
-        err_com = math.dist(ee_com, target)
+        err_com = math.dist(ee_com, tcp_static)       # 备查口径：link7 质心到 TCP 的固定偏移
         in_lim, bad = check_limits(q)
         tau_static = None
         if args.with_orca_mass:                       # 带载模式：静态持重力矩实算（含 ORCA 官方质量）
@@ -1634,8 +1845,8 @@ def main():
                 targetVelocities=[0.0] * NDOF, forces=FORCES,
                 positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
-            steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
+            tcp_now, _, _ = fk_tcp(robot, ee_idx)
+            steady = steady + 1 if math.dist(tcp_now, target) <= args.threshold else 0
             if steady >= STEADY_N and converge_step is None:
                 converge_step = k
             if writer is not None and k % args.every == 0:
@@ -1649,12 +1860,12 @@ def main():
                 targetVelocities=[0.0] * NDOF, forces=FORCES,
                 positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
-            steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
+            tcp_now, _, _ = fk_tcp(robot, ee_idx)
+            steady = steady + 1 if math.dist(tcp_now, target) <= args.threshold else 0
             if steady >= STEADY_N:
                 converge_step = ANIM_STEPS + HOLD_STEPS + k
                 break
-        ee_track = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+        ee_track, _, _ = fk_tcp(robot, ee_idx)
         err_track = math.dist(ee_track, target)
         q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]   # 伺服后实际关节角
 
@@ -1715,7 +1926,7 @@ def main():
                for r in rows]
     stats = {
         "date": time.strftime("%Y-%m-%d"),
-        "platform": "达妙七轴谐波机械臂（官方 URDF 派生）+ ORCA Hand 末端执行器（v8.3）",
+        "platform": "达妙七轴谐波机械臂（官方 URDF 派生）+ ORCA Hand 末端执行器（v8.3，TCP=果实被持点口径）",
         "frames": n_frames,
         "render_time_s": round(t_render, 1),
         "total_time_s": round(t_total, 1),
@@ -1961,32 +2172,32 @@ python select_targets.py                         # 目标点选取工具（可�
 
 | 模式 | 帧数估算 | 实测耗时（2026-11-18，v8.3 ORCA 版） |
 |------|----------|------------------------|
-| 默认 960×720 / 每 8 步（ORCA Hand） | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **976 帧，渲染 265.4 s，全程 266.0 s** |
-| 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 265.4 s < 5 分钟预算，未触发降级分支） |
-| `--no-video` | 1 帧（截图） | **0.6 s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |
+| 默认 960×720 / 每 8 步（ORCA Hand） | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **976 帧，渲染 262.1 s，全程 293.8 s** |
+| 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 262.1 s < 5 分钟预算，未触发降级分支） |
+| `--no-video` | 1 帧（截图） | **33.5 s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |
 | `--legacy-tentacle`（v8.2 复现分支） | 与默认相同 | 快速验证 5/5 通过；降分辨率（320×240 / 每 16 步）抽样渲染确认章鱼爪三阶段动画完整（§14.7，非全量基线） |
-| `--with-orca-mass`（带载对照） | 与默认相同 + 重力 | `--no-video` 快速验证 5/5 通过、静态持重力矩逐点峰值 J2 7.910 N·m（PyBullet 实算，含 ORCA 官方质量 1.135 kg）；**独立 CSV，完整渲染未执行** |
-| 素材派生 `make_demo_assets.py` | GIF 178 帧（取样 196） / 关键帧拼图 6 帧 | **GIF 400×300 / 178 帧 / 160 ms 每帧（≈6 fps，循环约 28.5 s）/ 32 色；拼图 1440×784**（由同一次运行的 MP4 派生，ORCA 口径标签） |
+| `--with-orca-mass`（带载对照） | 与默认相同 + 重力 | `--no-video` 快速验证 5/5 通过、静态持重力矩逐点峰值 **J4 6.048 / J2 4.249 / J6 3.030 N·m**（PyBullet 实算，含 ORCA 官方质量 1.135 kg）；**独立 CSV，完整渲染未执行** |
+| 素材派生 `make_demo_assets.py` | GIF 171 帧（取样 196） / 关键帧拼图 6 帧 | **GIF 400×300 / 171 帧 / 160 ms 每帧（≈6.2 fps，循环约 27.4 s）/ 32 色 / 1022 KB；拼图 1440×784 / 317 KB**（由同一次运行的 MP4 派生，ORCA 口径标签） |
 
-ER_TINY_RENDERER 为 CPU 软件渲染，不依赖 WSLg/GPU，但高分辨率下耗时不可忽略。**渲染耗时由脚本自动打印并应在结果表登记**。若默认模式渲染超过 5 分钟，属正常范围；超过 15 分钟改用降级分支重跑。v8 实测 265.4 s 落在预算内（帧数与 xArm6 版同为 976 帧，来自同样 5 段抓放演示），故降级分支未运行；该分支的耗时不作任何结论引用。达妙臂 STL 更大（16 个官方网格，合计约 33 MB），单帧渲染耗时与 xArm6 版同量级。
+ER_TINY_RENDERER 为 CPU 软件渲染，不依赖 WSLg/GPU，但高分辨率下耗时不可忽略。**渲染耗时由脚本自动打印并应在结果表登记**。若默认模式渲染超过 5 分钟，属正常范围；超过 15 分钟改用降级分支重跑。v8 实测 262.1 s 落在预算内（帧数与 xArm6 版同为 976 帧，来自同样 5 段抓放演示），故降级分支未运行；该分支的耗时不作任何结论引用。达妙臂 STL 更大（16 个官方网格，合计约 33 MB），单帧渲染耗时与 xArm6 版同量级。
 
 ### 8.3 结果记录表（2026-11-18 达妙七轴版全量重跑回填；数据源：控制台汇总表 + `results/reach_results.csv` + `results/run_stats.json`）
 
-| 点 | 目标 (m) | IK 残差 (mm) | 伺服误差 (mm) | COM (mm) | 限位 | 收敛步 | 结论 | 备注 |
+| 点 | 果实点 TCP (m) | TCP-IK 残差 (mm) | TCP 伺服误差 (mm) | COM 备查 (mm) | 限位 | 收敛步 | 结论 | 备注 |
 |----|----------|--------------|---------------|----------|------|--------|------|------|
-| P1 | (0.2258, -0.0060, 0.3250) | 0.000 | 0.000 | 71.69 | OK | 59 | 到达 | |
-| P2 | (0.2176, 0.1206, 0.2386) | 0.001 | 0.001 | 71.69 | OK | 59 | 到达 | |
-| P3 | (0.1742, -0.1081, 0.2361) | 0.000 | 0.000 | 71.69 | OK | 59 | 到达 | |
-| P4 | (0.2652, 0.0647, 0.3954) | 0.001 | 0.001 | 71.69 | OK | 59 | 到达 | |
-| P5 | (0.2747, -0.0486, 0.1567) | 0.000 | 0.000 | 71.69 | OK | 59 | 到达 | |
+| P1 | (0.4196, 0.0078, 0.3354) | 0.000 | 0.000 | 292.48 | OK | 59 | 到达 | |
+| P2 | (0.3614, 0.1476, 0.2506) | 0.000 | 0.000 | 292.48 | OK | 59 | 到达 | |
+| P3 | (0.3726, -0.1973, 0.2630) | 0.000 | 0.000 | 292.48 | OK | 59 | 到达 | |
+| P4 | (0.4794, 0.0654, 0.4014) | 0.000 | 0.000 | 292.48 | OK | 59 | 到达 | |
+| P5 | (0.4618, -0.0564, 0.1786) | 0.000 | 0.000 | 292.48 | OK | 59 | 到达 | |
 
-汇总信息：阈值 = **5 mm**（`--threshold 0.005`，未放宽）；渲染耗时 = **265.4 s**（976 帧 @ 960×720）；总耗时 = **266.0 s**（墙钟 2026-11-18 22:16 → 22:16）；pybullet 版本 = **3.2.7**（build time Jan 29 2025）。CSV 的 `render_time_s` = 265.4（全局渲染耗时，各行同值）。CSV 为 **5 行 21 列**（新增 `q7`）。演示层 5 段抓放（v8.3 默认 = ORCA Hand 固定子装配、预设握合姿态呈现）：放果点 IK 残差 0.00 mm、限位 5/5 OK，该段不写入 CSV。
+汇总信息：阈值 = **5 mm**（`--threshold 0.005`，未放宽）；判定口径 = **TCP（果实被持点 = ORCA 握合腔中心，link7 系 (0.048, 0, 0.32091)）**；渲染耗时 = **262.1 s**（976 帧 @ 960×720）；总耗时 = **293.8 s**（墙钟 2026-11-18 23:54 → 23:54；其中 TCP 姿态网格搜索与 IK 计算约 31.7 s，渲染占比 94.6%）；pybullet 版本 = **3.2.7**（build time Jan 29 2025）。CSV 的 `render_time_s` = 262.1（全局渲染耗时，各行同值）。CSV 为 **5 行 21 列**（新增 `q7`）。演示层 5 段抓放（v8.3 默认 = ORCA Hand 固定子装配、预设握合姿态呈现）：放果点 TCP 残差 0.00 mm、限位 5/5 OK，该段不写入 CSV。
 
-**目标点选取**：原 xArm6 的 5 点在达妙臂上**全部不可达**（IK 残差 146–200 mm，见 `handoff/演算基准.json` 的 `original_5_targets_IK`）。本轮用 `select_targets.py` 按官方限位 + 官方几何重扫 6000 组采样可达空间，在 5 个草莓簇锚点邻域内择优，要求：**残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、点间最小间距 0.08 m**，并采用与实跑一致的链式两段式 IK（初值 = 上一点解）。最终各点限位余量 **0.407 rad、0.308 rad、0.490 rad、0.730 rad、0.636 rad**。
+**目标点选取（v8.3 修正口径）**：判定点 = TCP 果实被持点，目标点 = 果实位置。`select_targets.py` 按官方限位重扫 **40000 组采样**（seed 20261118），果实点云按前方带包络过滤（x≥0.25、z∈[0.12,0.45]、r≤0.55，对应 link7 实测 r≤0.388、z∈[-0.031,0.487]，臂本体仍在官方可达包络内）得 **2628 点**；在 5 个草莓簇锚点邻域择优，要求：**TCP 残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、点间最小间距 0.08 m**（种子取候选点自身关节解，保证落在正确朝向分支）。最终各点限位余量 **0.456 rad、0.268 rad、0.443 rad、0.647 rad、0.406 rad**。
 
-**COM 备查列**：达妙 `link7` 的 COM 相对其原点偏移约 **71.7 mm**（因 `link7` 含官方「夹爪相机 3507 安装板」结构，重心外移），故 COM 口径与原点口径相差一个量级，**混用会制造虚假误差**；COM 仅备查、不参与任何判定。
+**COM 备查列**：v8.3 判定点改为 TCP 后，COM 列语义为「link7 质心到 TCP 的距离」= 固定值 **292.5 mm**（= |COM_local − TCP_OFFSET|，与关节角无关），仅备查、不参与任何判定。
 
-**实测结论**：5 点全部满足两重静态判定 + 伺服跟踪判据，逐点伺服跟踪误差 **0.000–0.001 mm < 5 mm**（实测值见表），`converged=1`、`in_limits=1`、收敛步全为 59；未发生任何目标点坐标或伺服增益调整（§9.2 决策树未触发）。**本结论只覆盖无重力设定下的轨迹跟踪与定位收敛**（判定点 = `link7` 原点，ORCA 子装配不进 IK 链、惯量置零），不代表带重力实物化性能，也不代表抓取成功率；末端执行器几何与果实搬运仅为流程可视化（§0 第 1 / 2 / 7 条）。
+**实测结论**：5 点全部满足两重静态判定 + 伺服跟踪判据，逐点 TCP 伺服跟踪误差 **0.000–0.000 mm < 5 mm**（实测值见表），`converged=1`、`in_limits=1`；未发生任何目标点坐标或伺服增益调整（§9.2 决策树未触发）。**本结论只覆盖无重力设定下的轨迹跟踪与定位收敛**（判定点 = TCP 果实被持点，ORCA 子装配惯量置零），不代表带重力实物化性能，也不代表抓取成功率；末端执行器几何与果实搬运仅为流程可视化（§0 第 1 / 2 / 7 条）。
 
 **结论书写规则**：仅当 5 点实测全部"到达"后，方可在结论区写"逐点误差 < 5 mm（实测值见表）"；存在未达标点时，结论如实写"Px 未收敛/超阈值，已按 §9.2 调整/记录"。**禁止先写结论再凑数。**
 
@@ -2006,10 +2217,10 @@ ER_TINY_RENDERER 为 CPU 软件渲染，不依赖 WSLg/GPU，但高分辨率下�
 
 | 现象 | 诊断 | 调整动作（每次只动一档，改后重跑） |
 |------|------|------------------------------------|
-| err_ik > 阈值 且 水平距离 > 0.30 m | 点位过远，接近臂展极限（达妙 link7 实测 r_max≈0.389 m） | 水平距离缩小 0.03 m |
-| err_ik > 阈值 且 z > 0.45 m | 点位过高（达妙 link7 实测 z 上限≈0.507 m） | z 下调 0.03 m |
-| err_ik > 阈值 且 解的限位余量 < 0.05 rad | 姿态贴限位 | 用 `select_targets.py` 重选邻域内余量更大的点 |
-| err_ik > 阈值 且以上三条都不满足 | IK 迭代不足 / 内置求解器停在局部解 | 先确认 `refine_ik()` 精修段已启用（本版已启用）；必要时加大 `IK_MAX_ITER` 或改用多初值粗解 |
+| TCP-IK 残差 > 阈值 且 果实点 r > 0.55 m | 点位过远，超出果实可达包络 | 水平距离缩小 0.03 m |
+| TCP-IK 残差 > 阈值 且 z 不在 [0.12, 0.45] 或 x < 0.25 m | 越出前方带包络 | 高度 / 距离微调后重扫 |
+| TCP-IK 残差 > 阈值 且 解的限位余量 < 0.05 rad | 姿态贴限位 | 用 `select_targets.py` 重选邻域内余量更大的点 |
+| TCP-IK 残差 > 阈值 且以上三条都不满足 | TCP 精修迭代不足 / 带姿态 IK 停在局部解 | 先确认 `tcp_refine()` 与 HOME 回退已启用（本版已启用）；必要时加大迭代数或改用多初值粗解 |
 | converged = 0（converge_step = timeout） | 伺服增益不足或收敛窗偏短（先确认 §0 第 6 条无重力设定未被改动） | `POS_GAIN` 1.0→2.0 重跑一次（振荡则 `VEL_GAIN` 1.0→2.0 加阻尼，见附录 C） |
 | in_limits = False | IK 解贴限位（姿态别扭） | 按上表同规则调整坐标后重跑 |
 
@@ -2065,17 +2276,17 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 ## 12. 答辩追问速答（口径与本文档一致）
 
 1. **末端执行器是什么？为什么画面里没有官方夹爪？**
-   末端执行器是 **ORCA Hand 灵巧手**（v8.3 默认）：几何与关节结构取自 SRL-ETHZ 官方描述仓库 `srl-ethz/orcahand_description`（**MIT License**），以 fixed joint 挂接于 `link7` 之后作为**固定子装配**——惯量置零、17 个 revolute 锁定为预设握合姿态、碰撞过滤屏蔽不参与接触，**不进运动学链、不参与误差判定、不写 CSV**；**腱绳耦合未在官方 URDF 中建模**（无 mimic/transmission），本仿真不含腱绳驱动、接触力学与夹持力，也不代表抓取成功率；**本轮明确不采用达妙官方夹爪**，官方 URDF 的夹爪子树（`tool_link` / `gripper_left` / `gripper_right` 及 2 个移动关节）已在派生 URDF 中整段裁剪，末端参考点固定为 `link7` 原点（不含 0.157 m 夹爪偏移）。v8.2 的卷曲仿生章鱼爪演示层保留为 `--legacy-tentacle` 复现分支。仿真控制结构为两层——**关节空间梯形轨迹规划 + 关节位置伺服**（POSITION_CONTROL，分关节力矩上限 + 轨迹段速度前馈；动力学含惯量与关节阻尼，**无重力设定**——验证指令跟踪与定位收敛，重力负载前馈补偿属实物化后续工作），验证臂本体定位链路。夹爪开合与接触力学属下一阶段。
+   末端执行器是 **ORCA Hand 灵巧手**（v8.3 默认）：几何与关节结构取自 SRL-ETHZ 官方描述仓库 `srl-ethz/orcahand_description`（**MIT License**），以 fixed joint 挂接于 `link7` 之后作为**固定子装配**——手的安装基面与机械臂末端法兰面（link7 腕筒顶面）**相切**、手指沿工具轴外伸；惯量置零、17 个 revolute 锁定为预设握合姿态、碰撞过滤屏蔽不参与接触；**腱绳耦合未在官方 URDF 中建模**（无 mimic/transmission），本仿真不含腱绳驱动、接触力学与夹持力，也不代表抓取成功率；**本轮明确不采用达妙官方夹爪**，官方 URDF 的夹爪子树（`tool_link` / `gripper_left` / `gripper_right` 及 2 个移动关节）已在派生 URDF 中整段裁剪。**精度判定点 = TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0, 0.32091)）**——拼装后到达果实的是末端执行器的握合腔而非法兰原点（2026-11-18 用户指正后重算）。v8.2 的卷曲仿生章鱼爪演示层保留为 `--legacy-tentacle` 复现分支。仿真控制结构为两层——**关节空间梯形轨迹规划 + 关节位置伺服**（POSITION_CONTROL，分关节力矩上限 + 轨迹段速度前馈；动力学含惯量与关节阻尼，**无重力设定**——验证指令跟踪与定位收敛，重力负载前馈补偿属实物化后续工作），验证臂本体定位链路。夹爪开合与接触力学属下一阶段。
 2. **IK 是怎么解的？为什么解是确定的？**
    位置-only 对 7 轴臂是**冗余问题**（3 约束 / 7 未知）；PyBullet 用 nullspace 法在满足位置约束的解流形中取最接近参考姿态 HOME 的解。限位（官方 7 组）、参考姿态（HOME）、初值策略（上一点实际关节角，保证解连续性）全部写死；内置求解器粗解后再加一段**位置-only 数值精修**（数值雅可比 + 阻尼最小二乘），因为 7 轴冗余下内置求解器在远距离初值会停在 3–8 mm 局部解。任何人复跑得到同一组关节角（可复现性）。
 3. **误差是怎么测的？测的是哪个点？**
-   末端 link 名为 `link7`（官方 URDF 七轴臂的最后一节，官方夹爪已裁剪）；误差 = 目标点到 `link7` 原点（URDF link frame 原点，`getLinkState[4]`）的欧氏距离，与 IK 的末端参考系一致，**不含夹爪偏移**；质心口径（[0]）同表备查（达妙臂两者相差约 71.7 mm）。link 索引按名反查，不硬编码。
+   末端 link 名为 `link7`（官方 URDF 七轴臂的最后一节，官方夹爪已裁剪）；误差 = 果实点到 **TCP（果实被持点 = 握合腔中心）**的欧氏距离，TCP = link7 原点 + R_link7 @ TCP_OFFSET（`fk_tcp()`，基于 `getLinkState[4]/[5]`）；质心口径（[0]）同表备查（link7 COM 到 TCP 为固定偏移约 292.5 mm）。link 索引按名反查，不硬编码。
 4. **5 mm 阈值怎么定的？**
    阈值是可配参数（--threshold）；实测**伺服跟踪误差**（无重力设定下控制回路的末端定位精度）见表 §8.3。草莓果径约 20–40 mm，毫米级末端定位误差对采摘目标而言裕度充分。
 5. **力矩上限是哪来的？**
    分关节取自**达妙官方 URDF 的 `<limit effort>`**：J1–J4 = 50 N·m、J5–J7 = 12 N·m，直接用于主流程位置伺服的 `forces` 参数与 URDF effort 标签。**口径提示**：该值是否已含减速比/效率折算，官方未写明，按「官方原始值」直接引用，不自行乘过载系数（xArm6 版的 2.55 过载系数不适用于本臂）。另有 numpy 静态重力矩校核（g=9.81，6000 组采样）：J2 峰值 8.83、J3 2.67、J4 2.74、J5 0.65、J6 0.68、J7 0.24 N·m，J5–J7 裕度约 11 N·m，全程静态不超限——**该值为静态演算，非 PyBullet 实跑、非带载精度验证**。
 6. **目标点为什么选这 5 个？**
-   **原 xArm6 的 5 点在达妙臂上全部不可达**（残差 146–200 mm，臂展差一代），因此按**达妙官方限位 + 官方几何重扫可达空间**后重选：预筛包络取自实测 `workspace.link7`（r ≤ 0.389 m、z ∈ [-0.111, 0.507]），在草莓簇锚点邻域内按「残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、点间距 ≥ 0.08 m」择优，选点工具为 `select_targets.py`（可复算）；最终以两重静态判定 + 伺服跟踪实测锁定，实测残差 0.000–0.001 mm；若发生过调整，登记于 §9.2 变更表。
+   **原 xArm6 的 5 点在达妙臂上全部不可达**（残差 146–200 mm，臂展差一代）；v8.3 修正后判定点 = TCP（果实被持点），因此按**达妙官方限位 + 官方几何 + ORCA 握合腔几何重扫果实可达空间**后重选：预筛包络取自 TCP 果实点云实测（前方带 x ≥ 0.25 m、z ∈ [0.12, 0.45]、r ≤ 0.55 m；对应 link7 实测 r ≤ 0.388 m、z ∈ [-0.031, 0.487]，臂本体仍在官方可达包络内），在草莓簇锚点邻域内按「TCP 残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、点间距 ≥ 0.08 m」择优，选点工具为 `select_targets.py`（可复算）；最终以两重静态判定 + 伺服跟踪实测锁定，实测 TCP 残差 0.000–0.001 mm；若发生过调整，登记于 §9.2 变更表。
 7. **动画里臂是怎么运动的？**
    关节空间梯形轨迹（加速 25% / 匀速 50% / 减速 25%）作为**目标轨迹**，由**位置伺服**（POSITION_CONTROL，分关节力矩上限 + 速度前馈）在 240 Hz 动力学仿真（URDF 惯量/阻尼，无重力设定）中跟踪执行，30 fps 导出；伺服增益调整指引见附录 C。
 8. **为什么用 PyBullet？**
@@ -2090,15 +2301,16 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 - [x] 模型派生自检：`derive_orcahand_urdf.py` 输出 **ORCA DERIVE PASS**（42 link / 41 joint、68 处 mesh 路径改写全部可达、17 个 revolute 锁定预设姿态、无 package:// 残留、83 个块与官方展开一致）
 - [x] 模型派生自检：`derive_damiao_urdf.py` 输出 **DERIVE PASS**（50 link / 49 joint、达妙 15 个保留块与官方逐字一致、ORCA 子装配 42 link / 41 fixed + 1 挂接 joint 校验通过）
 - [x] 加载自检 `python test_load.py`：**ALL PASS**（49 link、达妙 7 组官方限位逐项 PASS、末端 `link7` 索引按名反查 = 6、零位 FK 偏差 0.000 mm、ORCA 惯量置零 / 碰撞过滤 / 包围盒断言 PASS、渲染 307200 bytes）
-- [x] 5 点 err_ik / err_track / err_com / 限位判定 / 收敛步 / 结论（§8.3 表）：已按 2026-11-18 v8.3 全量重跑的 `results/reach_results.csv` 回填，**5/5 通过**，逐点残差 0.000–0.001 mm（阈值 5 mm 未放宽，判定点仍为 `link7` 原点）
-- [x] 渲染耗时：默认模式 **976 帧 / 265.4 s**（§8.2）；`render_time_s` = 265.4；`--no-video` 0.6 s；降级模式**未执行**（未触发）
+- [x] 5 点 err_ik / err_track / err_com / 限位判定 / 收敛步 / 结论（§8.3 表）：已按 2026-11-18 v8.3 修正后全量重跑的 `results/reach_results.csv` 回填，**5/5 通过**，逐点残差 0.000–0.000 mm（阈值 5 mm 未放宽，判定点 = TCP 果实被持点）
+- [x] **拼装与判定口径（v8.3 修正，用户两次指正后重算）**：手基面与法兰面相切（AABB Δ≤1 mm 断言 PASS）、手指沿工具轴外伸；判定点 = TCP（握合腔中心，link7 系 (0.048, 0, 0.32091)）；5 个目标点 = 果实位置，`select_targets.py` 按 TCP 口径重算（果实点云 2628 点 / 前方带包络），TCP 残差 0.000 mm
+- [x] 渲染耗时：默认模式 **976 帧 / 262.1 s**（§8.2）；`render_time_s` = 262.1；`--no-video` 33.5 s；降级模式**未执行**（未触发）
 - [x] 演示素材派生：`make_demo_assets.py` → `results/reach_demo.gif` + `results/reach_keyframes.png`（ORCA 口径中文标签），均已目检
 - [x] 负向验证 `--check-out-of-range`：**退出码 2**，越界点（P_BAD_H 水平 0.80 m > 0.389 m；P_BAD_Z z=0.80 m ∉ [-0.111, 0.507]）在 IK 前被预筛拒绝
-- [x] ORCA 末端执行器：固定子装配（fixed `joint_orca_wrist`）、惯量置零、预设握合姿态、碰撞过滤屏蔽、不进 IK 链 / 误差判定 / CSV；`select_targets.py` 复算与 v8.2 记录一致
+- [x] ORCA 末端执行器：固定子装配（fixed `joint_orca_wrist`）、惯量置零、预设握合姿态、碰撞过滤屏蔽；TCP 误差判定口径见上条
 - [x] `--legacy-tentacle` 分支：快速验证 5/5 通过 + 降分辨率抽样渲染确认章鱼爪三阶段动画完整（v8.2 复现口径）
-- [x] `--with-orca-mass` 带载对照：`--no-video` 快速验证 5/5 通过，独立 CSV `results/reach_results_orca_mass.csv`，逐点静态持重力矩峰值 J2 7.910 N·m（PyBullet 实算，含 ORCA 官方质量 1.135 kg）；**完整渲染未执行，数字不与无重力基线混报**
+- [x] `--with-orca-mass` 带载对照：`--no-video` 快速验证 5/5 通过，独立 CSV `results/reach_results_orca_mass.csv`，逐点静态持重力矩峰值 **J4 6.048 / J2 4.249 / J6 3.030 N·m**（PyBullet 实算，含 ORCA 官方质量 1.135 kg）；**完整渲染未执行，数字不与无重力基线混报**
 - [x] 演示层抓放：5 段，放果点 IK 残差 0.00 mm、限位 5/5 OK，篮子与果实入篮可见
-- [x] 结论区文字（按 §8.3 结论书写规则）：已写「逐点误差 0.000–0.001 mm < 5 mm」，附无重力设定与演示层边界限定
+- [x] 结论区文字（按 §8.3 结论书写规则）：已写「逐点误差 0.000–0.000 mm < 5 mm」，附无重力设定与演示层边界限定
 - [x] 静态重力矩校核（numpy，g=9.81，6000 组采样，v8.2 演算）：J2 8.83 / J3 2.67 / J4 2.74 / J5 0.65 / J6 0.68 / J7 0.24 N·m，对照 50/50/50/50/12/12/12 → J5–J7 裕度约 11 N·m（**该值未含 ORCA 质量**；含末端质量的对照见 `--with-orca-mass` 实算）
 - [ ] **带重力纯臂对照运行**（不带 ORCA 质量）：未执行（需用户单独裁决；不得与本组无重力数字混报）
 - [ ] `--with-orca-mass` 完整渲染 / 降级渲染分支 / `--threshold` 换阈值复跑：未执行
@@ -2226,14 +2438,14 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 | 1 | 仿真平台 | xArm6 六轴、手写 URDF | 达妙七轴、官方 URDF 派生 | 用户 11-18 决定平台改达妙（口径第三次变更） | `test_load.py` **ALL PASS**（7 关节 / 官方限位逐项一致 / 零位 FK 0.000 mm） |
 | 2 | 模型来源 | 手写 `xarm6_reach.urdf` | 派生 `damiao_reach.urdf`：删夹爪子树 + 改 mesh 路径，**几何/惯量/限位逐字未改** | 官方开源包已提供 URDF/STL，自建模型违反红线 | 派生脚本自检 **DERIVE PASS**（15 个保留块与官方逐字一致） |
 | 3 | 末端口径 | `link6`（索引硬编码 5） | `link7`，索引按 link 名反查 | 官方夹爪 `tool_link` 已裁剪；硬编码索引必错 | 索引实测 = 6；误差口径与 COM 备查列同步更新（相差约 71.7 mm） |
-| 4 | 目标点 | P1–P5 原坐标 | 按官方几何重扫可达空间重选 5 点 | 原 5 点在达妙臂上残差 146–200 mm，**全部不可达** | 残差 0.000–0.001 mm，限位余量 0.407 rad、0.308 rad、0.490 rad、0.730 rad、0.636 rad，5/5 一次通过 |
+| 4 | 目标点 | P1–P5 原坐标 | 按官方几何重扫可达空间重选 5 点 | 原 5 点在达妙臂上残差 146–200 mm，**全部不可达** | 残差 0.000–0.001 mm，限位余量 0.456 rad、0.268 rad、0.443 rad、0.647 rad、0.406 rad，5/5 一次通过 |
 | 5 | 预筛包络 | r ≤ 0.70 m、z ∈ [0.10, 0.75] | r ≤ 0.389 m、z ∈ [-0.111, 0.507] | 取自实测 `workspace.link7`（6000 组采样） | 负向验证两点均被预筛拒绝，退出码 2 |
 | 6 | IK | 内置单次（maxNumIterations=100） | 内置粗解 + **位置-only 数值精修**（LM 式阻尼递增），初值 = 上一点实际关节角 | 7 轴冗余下内置求解器远距离初值停在 3–8 mm 局部解（超 5 mm 阈值）；连续性靠链式初值保证 | 残差 0.000–0.001 mm；**未放宽阈值、未改限位** |
 | 7 | 维度 | 6 维 q1–q6、CSV 20 列 | 7 维 q1–q7、CSV 21 列 | 自由度 6 → 7 | CSV 5 行 21 列，与脚本一致 |
 | 8 | 演示层 | 3 根 x 6 段触手 + 抓放循环 | **原样保留**（常量与两处函数逐字不动），仅挂载点索引换成实测 link7 索引 | 用户要求不重做末端执行器 | 画面确认无官方夹爪、三阶段动画完整 |
-| 9 | 旧实跑数字 | 0.29–0.88 mm / 976 帧 / 133.3 s / converge_step=59 / 5-5 | **标注「xArm6 基线（已废弃）」**，仅留作历史对照 | 平台更换后旧数字不再是达妙结果 | 本版实跑：0.000–0.001 mm / 976 帧 / 265.4 s / 5-5 |
-| 10 | 末端演示层坐标系 | 触手与果实按**世界坐标**摆放（`ee + 偏移`，不乘腕部旋转）→ 腕部一转，爪与关节末端**歪出脱开**，缠绕圈也没包住果实 | 几何改在 **link7 局部坐标系**生成，再乘 link7 的世界旋转矩阵落到世界系（`wp = pos + R @ [x,y,z]`，果实同理）；零位时 R = I，历史画面不变 | 末端执行器必须与关节末端同朝向，否则演示层自相矛盾 | **纯视觉修正，不改控制链路**：5/5 仍通过、残差 0.000–0.001 mm 不变；对照渲染确认触手长在 link7 末端并顺腕部轴向包住果实 |
-| 11 | 末端执行器安装方向（**用户指出「装反」**） | 触手沿局部 **-z** 伸展（指向臂体内部）、缠绕环心在局部 -0.03 m → 爪缩在腕关节与臂体之间，视觉上「装反」 | 伸展方向翻转为局部 **+z（法兰外侧）**；缠绕环心改为 **link7 原点 = 被测点/草莓标记位置**（爪夹住的位置与误差测量点重合）；搬运果实跟随原点，`FRUIT_HELD_Z` 偏移常量删除 | 末端执行器必须从法兰外侧伸出，且夹持点应与被测点一致，避免引入未建模工具偏移 | **纯视觉修正，不改控制链路**：5/5 仍通过、残差 0.000–0.001 mm 不变；复跑渲染确认爪从法兰外侧伸出并包住腕端果实 |
+| 9 | 旧实跑数字 | 0.29–0.88 mm / 976 帧 / 133.3 s / converge_step=59 / 5-5 | **标注「xArm6 基线（已废弃）」**，仅留作历史对照 | 平台更换后旧数字不再是达妙结果 | 本版实跑：0.000–0.000 mm / 976 帧 / 262.1 s / 5-5 |
+| 10 | 末端演示层坐标系 | 触手与果实按**世界坐标**摆放（`ee + 偏移`，不乘腕部旋转）→ 腕部一转，爪与关节末端**歪出脱开**，缠绕圈也没包住果实 | 几何改在 **link7 局部坐标系**生成，再乘 link7 的世界旋转矩阵落到世界系（`wp = pos + R @ [x,y,z]`，果实同理）；零位时 R = I，历史画面不变 | 末端执行器必须与关节末端同朝向，否则演示层自相矛盾 | **纯视觉修正，不改控制链路**：5/5 仍通过、残差 0.000–0.000 mm 不变；对照渲染确认触手长在 link7 末端并顺腕部轴向包住果实 |
+| 11 | 末端执行器安装方向（**用户指出「装反」**） | 触手沿局部 **-z** 伸展（指向臂体内部）、缠绕环心在局部 -0.03 m → 爪缩在腕关节与臂体之间，视觉上「装反」 | 伸展方向翻转为局部 **+z（法兰外侧）**；缠绕环心改为 **link7 原点 = 被测点/草莓标记位置**（爪夹住的位置与误差测量点重合）；搬运果实跟随原点，`FRUIT_HELD_Z` 偏移常量删除 | 末端执行器必须从法兰外侧伸出，且夹持点应与被测点一致，避免引入未建模工具偏移 | **纯视觉修正，不改控制链路**：5/5 仍通过、残差 0.000–0.000 mm 不变；复跑渲染确认爪从法兰外侧伸出并包住腕端果实 |
 
 **未改动项（红线核对）**：`--threshold` 保持 0.005 m（未放宽）；官方 7 组关节限位、HOME / restPoses = 官方零位、FORCES = 50/50/50/50/12/12/12、POS_GAIN / VEL_GAIN = 1.0 / 1.0、`setGravity(0,0,0)`、STEADY_N = 60、SERVO_MAX_STEPS = 3000 全部未改；章鱼爪形态常量与三阶段时间线未改；未删点、未隐藏失败记录；§9.2 决策树未触发。
 
@@ -2241,7 +2453,7 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 
 ### 14.7 v8.3：末端执行器更换为 ORCA Hand 官方 URDF（2026-11-18，第四次口径变更）
 
-**口径裁决**：课设立论为**仿生机械臂本体**的定位精度验证；末端执行器为可替换模块。v8.3 只换末端执行器，**不动仿生臂本体**：精度判定点保持 `link7` 原点不变，ORCA 作为 `link7` 之后的固定子装配挂接，不进 IK 链、不改 5 个目标点、不改预筛包络、不改 CSV 的误差口径，v8.2 的判据与阈值全部沿用。
+**口径裁决**：课设立论为**仿生机械臂本体**的定位精度验证；末端执行器为可替换模块。v8.3 只换末端执行器，**不动仿生臂本体**；同日用户两次指正后修正拼装与判定口径：① 手的安装基面与机械臂末端法兰面**相切**（消除悬空偏移）；② 判定点改为 **TCP = 果实被持点 = ORCA 握合腔中心**（拼装后到达果实的是末端执行器而非法兰原点），5 个目标点按 TCP 口径**重算为果实位置**、预筛包络改为果实点云实测。5 mm 阈值、两重静态判定 + 伺服跟踪判据、CSV 字段结构全部沿用。
 
 | 项 | 值 |
 |---|---|
@@ -2254,15 +2466,17 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 
 | # | 类别 | 旧值 / 现象（v8.2） | 新值 / 处理（v8.3） | 原因 | 重跑结果 |
 |---|------|-------------|-------------|------|----------|
-| 1 | 末端执行器 | 卷曲仿生章鱼爪纯视觉演示层（不在 URDF 内） | **ORCA Hand 官方 URDF 几何**（srl-ethz/orcahand_description，MIT），fixed 挂接 `joint_orca_wrist` | 用户 21:08 裁决：课设立论是仿生臂本体，末端执行器可换（第四次口径变更） | `test_load.py` ALL PASS（ORCA 断言全过）；选点复算与 v8.2 一致；5/5 通过 |
+| 1 | 末端执行器 | 卷曲仿生章鱼爪纯视觉演示层（不在 URDF 内） | **ORCA Hand 官方 URDF 几何**（srl-ethz/orcahand_description，MIT），fixed 挂接 `joint_orca_wrist` | 用户 21:08 裁决：课设立论是仿生臂本体，末端执行器可换（第四次口径变更） | `test_load.py` ALL PASS（ORCA 断言全过）；5/5 通过 |
 | 2 | ORCA 子装配口径 | — | 惯量置零（42 link mass=0）、17 个 revolute 锁定为预设握合姿态（均在官方限位内）、碰撞过滤屏蔽不参与接触 | 维持 v8.2 无重力基线与位置伺服口径不变；官方 URDF 无 mimic/transmission，腱绳耦合未建模 | ORCA DERIVE PASS（83 块与官方展开一致）；伺服误差 0.000–0.001 mm 不变 |
 | 3 | 演示层 | 章鱼爪三阶段（默认） | **默认 = ORCA 握合呈现**；章鱼爪保留为 `--legacy-tentacle` 分支 | 主演示改为 ORCA Hand，v8.2 可复现 | 降分辨率抽样渲染确认三阶段动画完整 |
-| 4 | 带载对照 | 无 | 新增 `--with-orca-mass`：重力 + ORCA 官方质量 1.135 kg + 独立 CSV | 分离带载口径，禁止数字混报 | 快速验证 5/5 通过；静态持重力矩峰值 J2 7.910 N·m（PyBullet 实算）；完整渲染未执行 |
+| 4 | 带载对照 | 无 | 新增 `--with-orca-mass`：重力 + ORCA 官方质量 1.135 kg + 独立 CSV | 分离带载口径，禁止数字混报 | 快速验证 5/5 通过；静态持重力矩峰值 J4 6.048 / J2 4.249 N·m（PyBullet 实算）；完整渲染未执行 |
 | 5 | 模型文件 | 8 link / 7 revolute | **50 link / 49 joint**（+42 ORCA link、+41 ORCA fixed、+1 挂接 fixed） | ORCA 为固定子装配，不引入可动关节 | `test_load.py` 断言 revolute=7、fixed=42 PASS |
 | 6 | run_stats.json | 手工维护 | 主脚本自动回填（指导书生成器数据源） | 保证「文档 = 工程」 | v8.3 重跑自动生成 |
 | 7 | 达妙臂主体 | 官方 URDF 派生 | **不变**（15 个保留块逐字一致、16 个官方 STL 未动） | 红线：不动臂本体 | DERIVE PASS 校验含 ORCA 项后仍通过 |
+| 8 | 挂接修正（**用户指正①**） | 手悬空挂接（xyz=(-0.15,0,-0.06)，掌面向上托果，握合腔对准 link7 局部 (0,0,-0.03)） | **手基面与法兰面相切**：origin xyz=(0,0,0.10891)（法兰面 z=0.0907 + 基面抬升 0.01821）、rpy=(0,0,-π/2)，手指沿工具轴外伸、掌面朝 link7 +x | 手的底部法兰应与机械臂末端执行器法兰相切（2026-11-18 用户指正） | AABB 断言：手基面 z 0.58880 = 法兰面 z 0.58880（Δ<0.1 mm）；渲染核验无间隙无穿模 |
+| 9 | 判定口径修正（**用户指正②**） | 判定点 = link7 原点（法兰），目标点 = link7 可达点 | 判定点 = **TCP（果实被持点 = 握合腔中心，link7 系 (0.048,0,0.32091)）**；5 个目标点重算为果实位置（P1 (0.4196,0.0078,0.3354) 等），IK 改带姿态约束 + TCP 数值精修 | 拼装后到达果实位置的是末端执行器而非法兰原点，要按实际重算（2026-11-18 用户指正） | 全量重跑 **5/5 通过**，TCP 残差 0.000–0.001 mm；目标点选取与包络登记见 §8.3 |
 
-**未改动项（红线核对）**：`--threshold` 保持 0.005 m；官方 7 组关节限位、HOME / restPoses、FORCES、POS_GAIN / VEL_GAIN、`setGravity(0,0,0)`（默认模式）、STEADY_N、SERVO_MAX_STEPS 未改；5 个目标点未改；达妙 16 个官方 STL 未动；ORCA 68 个官方 STL 未动；未删点、未隐藏失败记录；§9.2 决策树未触发。
+**未改动项（红线核对）**：`--threshold` 保持 0.005 m；官方 7 组关节限位、FORCES、POS_GAIN / VEL_GAIN、`setGravity(0,0,0)`（默认模式）、STEADY_N、SERVO_MAX_STEPS 未改；达妙 16 个官方 STL 未动；ORCA 68 个官方 STL 未动；未删点、未隐藏失败记录；§9.2 决策树未触发。**已按口径修正**：5 个目标点（重算为果实位置）、预筛包络（改为果实点云实测）、HOME/restPoses 仍为官方零位（TCP 求解的 nullspace 参考）。
 
 **边界声明（答辩必须主动说明）**：无重力设定；ORCA 子装配惯量置零，**不代表带载精度**；腱绳耦合未建模、无接触力学与夹持力；果实搬运为纯视觉移动；**不代表抓取成功率**。带载数字（`--with-orca-mass`）与无重力基线数字分列，不混用。
 
@@ -2279,7 +2493,9 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 | 连杆惯量（mass/origin/惯性张量） | base_link 0.94 / link1 0.87 / link2 0.278196 / link3 1.005 / link4 1.244 / link5 0.0756 / link6 0.926 / link7 0.1765 kg | 同上 `<inertial>`（**仿真以 URDF 为准**；SolidWorks 导出 CSV 的 Mass 列多处不一致，冲突时以 URDF 为准） |
 | 零位 FK 末端理论值 | link7 原点 = (0, -0.03325, 0.4981) m | 本指导书 §2.3 累加推导；与 `handoff/演算基准.json` 的 `zero_pose.link7_tcp_m` 一致 |
 | HOME / restPoses | 官方零位 `[0]*7` rad | 本实验定义（官方零位即 nullspace 参考）；**v8 实跑锁定** |
-| 目标点 5 个 | 见 §7 脚本 TARGETS（P1–P5，见 §8.3 表） | `select_targets.py` 按官方限位 + 官方几何重扫可达空间择优（残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、间距 ≥ 0.08 m）；**v8 实跑锁定**：5 点全部通过 |
+| 目标点 5 个（TCP 果实点） | 见 §7 脚本 TARGETS（P1–P5，见 §8.3 表） | `select_targets.py` 按官方限位 + 官方几何 + TCP 口径重扫果实可达空间择优（TCP 残差 ≤ 2 mm、限位余量 ≥ 0.15 rad、间距 ≥ 0.08 m）；**v8.3 修正实跑锁定**：5 点全部通过 |
+| TCP（果实被持点，v8.3 判定口径） | link7 系 `TCP_OFFSET = (0.048, 0, 0.32091)` m；零位 TCP 世界值 (0.048, -0.03325, 0.81901) m | 官方展开 URDF 几何实测（握合腔中心：掌面与卷曲指尖之间）；`damiao_reach_demo.py` 常量区 `TCP_OFFSET`；`test_load.py` 零位断言（容差 ±5 mm） |
+| 果实预筛包络（v8.3） | 前方带 x ≥ 0.25 m、z ∈ [0.12, 0.45]、r ≤ 0.55 m（TCP 果实点云 40000 组采样实测；对应 link7 r ≤ 0.388、z ∈ [-0.031, 0.487]） | `select_targets.py` / `damiao_reach_demo.py` 常量区 `X_MIN / RADIUS_MAX / Z_MIN / Z_MAX`（seed 20261118） |
 | 预筛半径/高度 | 0.389 m / [-0.111, 0.507] m | `handoff/演算基准.json` 的 `workspace.link7`（6000 组限位内采样，`r_max`≈0.3892） |
 | IK 参数 | `IK_MAX_ITER=200`、`IK_TOL=1e-5`；内置粗解 + `refine_ik()` 位置-only 数值精修（数值雅可比 eps=1e-5、阻尼 1e-7→1e-0 递增、最多 60 次） | PyBullet API 参数 + 本实验定义（见 §2.1 / §7） |
 | 伺服参数 | STEADY_N=60（连续 0.25 s 达标判收敛）、SERVO_MAX_STEPS=3000（超时兜底 12.5 s）、POS_GAIN=1.0 / VEL_GAIN=1.0 + 轨迹段速度前馈 targetVelocities（无重力设定下的验证基线）、梯形轨迹 480 步 @240 Hz | 本实验定义；依据见附录 C |
@@ -2290,9 +2506,9 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 | 官方夹爪数据（**本轮不使用，仅存档**） | `tool_link` 原点 (0, 0, 0.65498) m，相对 link7 偏移 0.157 m；`tool_joint` 为 fixed；`gripper_joint1/2` 为 prismatic 0–0.045 m | 达妙官方 URDF（裁剪前的原始文件） |
 | ORCA Hand 末端执行器来源（v8.3） | `srl-ethz/orcahand_description`（**MIT License**，描述文件仓库）；硬件制造包 `orcahand/orca_files`（**CC BY 4.0**，仅作参考、无 URDF，本工程不使用）；官方 mesh 几何未修改 | `third_party/orcahand/`（官方 xacro 原样复制 + LICENSE 副本）；`meshes/orcahand/{visual,collision}/` 34+34 个官方 STL 原样 |
 | ORCA 展开与派生口径（v8.3） | 展开 `chirality:=right prefix:=orca_ extension:=true`（68 处 mesh 引用、42 link / 41 joint / 17 revolute，与验收要求 34+34 STL 全部可达一致；提示词示例命令 extension:=false 仅 62 处，已按验收口径取 true 并登记）；派生 = mesh 路径改写 + 惯量置零 + 17 个 revolute 锁定 | `third_party/orcahand/expand_orcahand_xacro.py`；`derive_orcahand_urdf.py`（**ORCA DERIVE PASS**：83 块与官方展开一致、无 package:// 残留） |
-| ORCA 挂接参数（v8.3） | `link7 → orca_root`（fixed `joint_orca_wrist`）：origin xyz = (-0.15, 0, -0.06) m，rpy = (π/2, 0, π/2)；掌面向上托果，握合腔中心对准果实保持点 link7 局部 (0, 0, -0.03)；零位包围盒 0.256×0.100×0.081 m、最低点 0.438 m 不与地面穿模 | `derive_damiao_urdf.py` 的 `ORCA_MOUNT_*`（依据官方展开 URDF root 系几何实测确定，渲染核验通过） |
+| ORCA 挂接参数（v8.3 修正，按实际拼装） | `link7 → orca_root`（fixed `joint_orca_wrist`）：origin xyz = (0, 0, 0.10891) m，rpy = (0, 0, -π/2)；**手的安装基面（塔座底面 root 系 z=-0.01821）与机械臂末端法兰面（link7 腕筒顶面 link7 系 z=0.0907）相切**，手指沿工具轴外伸、掌面朝 link7 +x；零位包围盒 0.212×0.200×0.299 m、手基面 z 0.58880 = 法兰面 z 0.58880（Δ<0.1 mm）、不与地面穿模 | `derive_damiao_urdf.py` 的 `ORCA_MOUNT_*`（法兰面 = 官方 tool 转接板顶面/腕筒顶面实测；`test_load.py` 相切断言 PASS） |
 | ORCA 预设握合姿态（v8.3，示意值） | wrist 0；四指 abd 0.04–0.10 / mcp 1.05–1.20 / pip 0.35–0.42；拇指 mcp 0.45 / abd 0.55 / pip 0.50 / dip 0.15 rad（**全部在官方 `<limit>` 内**；官方 URDF 未建模腱绳耦合、未提供姿态表，此为示意姿态，不代表真实抓取） | `derive_orcahand_urdf.py` 的 `PRESET`（锁定角烘焙进 joint origin，并在 URDF 注释登记官方限位） |
-| 带载对照口径（v8.3，`--with-orca-mass`） | 重力 9.81 m/s² + ORCA 官方质量合计 1.135 kg（tower 0.9 kg + 全惯量）；逐点静态持重力矩 PyBullet 实算峰值 J2 7.910 N·m | `damiao_reach_demo.py --with-orca-mass`（独立 CSV `results/reach_results_orca_mass.csv`；**与无重力基线数字分列，禁止混报**） |
+| 带载对照口径（v8.3，`--with-orca-mass`） | 重力 9.81 m/s² + ORCA 官方质量合计 1.135 kg（tower 0.9 kg + 全惯量）；逐点静态持重力矩 PyBullet 实算峰值 J4 6.048 / J2 4.249 / J6 3.030 N·m（TCP 口径新目标点） | `damiao_reach_demo.py --with-orca-mass`（独立 CSV `results/reach_results_orca_mass.csv`；**与无重力基线数字分列，禁止混报**） |
 
 ---
 

@@ -19,7 +19,8 @@ v8.3 新增（ORCA 末端执行器，口径见 PROMPT_ORCA末端执行器_v8.3_R
   5. 在 link7 之后以 fixed joint 挂接 ORCA Hand 仿真专用子装配
      （来源 third_party/orcahand/orcahand_right_sim.urdf，由 derive_orcahand_urdf.py
      从官方 MIT 描述文件派生：惯量置零、17 个 revolute 锁定为预设握合姿态）；
-     ORCA 不进 IK 链、不改 5 个目标点、不改误差口径（判定点仍为 link7 原点）；
+     精度判定点 = TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0, 0.32091)），
+     目标点 = 果实位置（select_targets.py 按 TCP 口径重算，见 v8.3 修正）；
   6. 达妙臂主体 8 link / 7 revolute / 15 个官方保留块逐字一致的要求不变，
      新增对 ORCA 子装配（42 link / 41 fixed + 1 个挂接 fixed joint）的强校验。
 """
@@ -32,12 +33,17 @@ DROP_LINKS = {"tool_link", "gripper_left", "gripper_right"}
 DROP_JOINTS = {"tool_joint", "gripper_joint1", "gripper_joint2"}
 
 # ---- ORCA 子装配挂接参数（link7 -> orca_root，fixed） ----
-# 朝向依据（2026-11-18 实测）：官方展开 URDF 在 root 系中手指沿 +z 延伸、卷向 +y
-# （掌面朝 +y）。挂接变换将掌面转到 link7 局部 -z（果实方向）、握合腔中心对准
-# 果实保持点 link7 局部 (0, 0, -FRUIT_HELD_Z=0.03)：手指朝腕前方伸展并从上方包拢果实。
+# 依据（2026-11-18 第二次修正，按实际拼装重算）：
+#   * 法兰面：link7 腕筒顶面 = 末端执行器法兰（零位世界 z=0.5888，即 link7 系
+#     z=0.0907；官方 tool_link 转接板顶面 0.5878 与之齐平，官方夹爪即装于此面）；
+#   * 手的安装基面：官方展开 URDF 实测塔座结构最低面 z_r = -0.01821 m
+#     （PyBullet AABB），挂接时抬升该值使基面与法兰面相切（无间隙、无穿模）；
+#   * 朝向：手指延伸方向（root +z）对齐工具轴（link7 +z），即手沿法兰轴向外伸出；
+#     掌面（root +y）朝 link7 +x，握合腔位于工具轴 +x 侧（果实被持点由
+#     derive 后的 TCP 常量给出，见 damiao_reach_demo.py / select_targets.py）。
 ORCA_SIM_URDF = "third_party/orcahand/orcahand_right_sim.urdf"
-ORCA_MOUNT_XYZ = "-0.15 0 -0.06"
-ORCA_MOUNT_RPY = "1.5707963267948966 0 1.5707963267948966"
+ORCA_MOUNT_XYZ = "0 0 0.10891"                # = 法兰面 z 0.0907 + 手基面抬升 0.01821
+ORCA_MOUNT_RPY = "0 0 -1.5707963267948966"    # Rz(-90°)：root z->link7 z（工具轴），root y->link7 x
 EXPECT_ORCA_LINKS, EXPECT_ORCA_JOINTS = 42, 41
 EXPECT_ORCA_MESHES = 68
 
@@ -137,9 +143,9 @@ def main() -> int:
     orca_body = orca_body[orca_body.index(">") + 1:]          # 去掉 <robot ...> 开标签
     orca_mount = (
         "  <!-- v8.3 ORCA Hand 挂接：link7 -> orca_root（fixed，不进 IK 链）。\n"
-        "       朝向：掌面向上托住果实（握合腔开口向上），指尖自腕前方 (+x)\n"
-        "       向上包拢；握合腔中心对准果实保持点 link7 局部 (0, 0, -0.03)。\n"
-        "       偏移与旋转依据官方展开 URDF 的 root 系几何实测确定。 -->\n"
+        "       按实际拼装：手的安装基面（塔座底面，root 系 z=-0.01821）与机械臂\n"
+        "       末端法兰面（官方 tool_joint: link7 系 (0,0.03325,0.15688)）相切；\n"
+        "       手指延伸方向对齐工具轴（link7 +z），掌面朝 link7 +x。 -->\n"
         f'  <joint name="joint_orca_wrist" type="fixed">\n'
         f'    <origin xyz="{ORCA_MOUNT_XYZ}" rpy="{ORCA_MOUNT_RPY}" />\n'
         f'    <parent link="link7" />\n'
