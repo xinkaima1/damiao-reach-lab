@@ -49,7 +49,9 @@ def ee_index(robot):
 
 
 def fk(robot, idx):
-    return p.getLinkState(robot, idx, computeForwardKinematics=1)[4]
+    """夹持中心（TCP）= link7 原点 + R·[0,0,TOOL_OFFSET_Z]（与主脚本 fk_pos 同口径）。"""
+    import damiao_reach_demo as D
+    return D.fk_pos(robot, idx)
 
 
 def in_limits(q):
@@ -113,7 +115,7 @@ def main():
     # ---- 2) 草莓簇锚点（基座前方 +x、左右对称、两个高度层） ----
     anchors = [
         ("P1", (0.22, 0.00, 0.32)),
-        ("P2", (0.17, 0.11, 0.24)),
+        ("P2", (0.26, -0.12, 0.26)),
         ("P3", (0.17, -0.11, 0.24)),
         ("P4", (0.28, 0.05, 0.40)),
         ("P5", (0.28, -0.05, 0.17)),

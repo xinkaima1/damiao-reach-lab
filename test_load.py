@@ -79,6 +79,16 @@ def main() -> int:
           f"|Δ| = {err * 1000:.3f} mm {'PASS' if err <= TOL else 'FAIL'}")
     print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查，与原点相差属正常）")
 
+    # [5b] 零位 TCP（夹持中心）断言：零位 R=I，TCP = link7 原点 + [0,0,TOOL_OFFSET_Z]
+    TOOL = 0.11
+    expect_tcp = (EXPECT_HOME_EE[0], EXPECT_HOME_EE[1], EXPECT_HOME_EE[2] + TOOL)
+    tcp = (ee_frame[0], ee_frame[1], ee_frame[2] + TOOL)
+    err_tcp = math.dist(tcp, expect_tcp)
+    ok &= err_tcp <= TOL
+    print(f"[5b] 零位 TCP（夹持中心）断言（理论值 {expect_tcp} m，容差 5 mm）：")
+    print(f"    TCP = ({tcp[0]:.5f}, {tcp[1]:.5f}, {tcp[2]:.5f})，|Δ| = {err_tcp * 1000:.3f} mm "
+          f"{'PASS' if err_tcp <= TOL else 'FAIL'}")
+
     print("[6] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示）")
     view = p.computeViewMatrixFromYawPitchRoll(
         cameraTargetPosition=(0.15, 0.0, 0.25), distance=1.2,

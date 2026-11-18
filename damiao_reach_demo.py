@@ -30,6 +30,8 @@ import pybullet_data
 
 NDOF = 7                                       # 达妙七轴
 EE_NAME = "link7"                             # 末端 link 名（按名反查索引，禁止硬编码）
+TOOL_OFFSET_Z = 0.11                           # 工具偏移：夹持中心 TCP = link7 原点 + R·[0,0,L]（m）
+                                               # L=0.11 > link7 网格沿 +z 上限 0.0877（相机安装板），爪环不与 URDF 干涉
 
 # ---------------- 固定参数（数值来源见指导书附录 B，禁止随手改） ----------------
 HOME = [0.0] * NDOF                            # 官方零位姿态：IK 初值 = nullspace 参考 = 动画起始
@@ -41,14 +43,14 @@ LIMITS = [(-2.827, 2.827),                    # 官方 URDF <limit>（与 README
           (-1.3264502315156903, 1.3264502315156903),
           (-1.335176877775662, 1.335176877775662)]
 FORCES = [50.0, 50.0, 50.0, 50.0, 12.0, 12.0, 12.0]   # N·m，取自官方 URDF <limit effort>
-TARGETS = [                                    # 按「官方限位 + 官方几何」重扫可达空间后重选
-    ("P1", (0.2258, -0.0060, 0.3250)),         # IK 残差 0.000 mm，限位余量 0.408 rad
-    ("P2", (0.2176, 0.1206, 0.2386)),          # 0.001 mm / 0.188 rad
-    ("P3", (0.1742, -0.1081, 0.2361)),         # 0.000 mm / 0.342 rad
-    ("P4", (0.2652, 0.0647, 0.3954)),          # 0.000 mm / 0.716 rad
-    ("P5", (0.2747, -0.0486, 0.1567)),         # 0.000 mm / 0.652 rad
+TARGETS = [                                    # 按 TCP 口径重扫可达空间后重选（results/tcp_workspace.json）
+    ("P1", (0.2582, -0.0324, 0.3198)),         # IK 残差 0.000 mm，限位余量 0.165 rad
+    ("P2", (0.2654, -0.1176, 0.2665)),         # 0.000 mm / 0.326 rad
+    ("P3", (0.1912, -0.1395, 0.2209)),         # 0.000 mm / 0.153 rad
+    ("P4", (0.2809, 0.0567, 0.3962)),          # 0.000 mm / 0.431 rad
+    ("P5", (0.2771, -0.0611, 0.1826)),         # 0.000 mm / 0.157 rad
 ]
-RADIUS_MAX, Z_MIN, Z_MAX = 0.389, -0.111, 0.507   # IK 前预筛：link7 实测可达包络
+RADIUS_MAX, Z_MIN, Z_MAX = 0.49, -0.20, 0.60   # IK 前预筛：TCP 实测可达包络（含工具偏移 0.11 m）
                                               # （handoff/演算基准.json workspace.link7，6000 组采样）
 IK_MAX_ITER, IK_TOL = 200, 1e-5                # IK 迭代上限与残差阈值
 SIM_HZ = 240                                    # 仿真步频（setTimeStep 真实生效）
@@ -163,8 +165,25 @@ def set_joints(robot, q):
         p.resetJointState(robot, i, q[i])
 
 
+def quat_R(quat):
+    """四元数 (x,y,z,w) → 3×3 旋转矩阵。"""
+    x, y, z, w = quat
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ])
+
+
 def fk_pos(robot, ee_idx):
-    return np.array(p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4])
+    """末端夹持中心（TCP）世界坐标 = link7 原点 + R·[0,0,TOOL_OFFSET_Z]。
+
+    口径变更（2026-11-18，用户诊断）：夹持中心不能与被测点/草莓重合压在腕上——
+    那样爪环必然陷入 link7 网格（相机安装板沿 +z 伸至 0.0877 m）。TCP 定义在
+    法兰外 L=0.11 m 处：腕部停在果实体外，爪从法兰伸出正好包住草莓。
+    """
+    ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
+    return np.array(ls[4], dtype=float) + quat_R(ls[5]) @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
 
 
 def solve_ik(robot, ee_idx, target, seed=None):
@@ -313,9 +332,9 @@ def main():
         """三阶段形态：向后卷曲(对数螺旋) -> 反向展开 -> 球面缠绕包覆果实。
 
         t in [0,1]：0 = 卷曲待机；0~0.5 由卷曲插值到展开；0.5~1 由展开插值到缠绕。
-        几何在 **link7 局部坐标系**（+z = 法兰外侧方向，缠绕环心 = link7 原点 =
-        被测点/草莓标记位置），再乘 link7 的世界旋转矩阵落到世界系，因此触手
-        始终从法兰外侧伸出并与关节末端同朝向、始终包住果实。
+        几何以**夹持中心 TCP**（link7 局部 [0,0,TOOL_OFFSET_Z]=0.11 m，在 link7
+        网格之外）为缠绕环心：腕部停在果实体外，触手从法兰伸出越过腕部包住草莓——
+        环不再陷入 link7 网格（2026-11-18 用户诊断的干涉根因）。
         纯视觉，不参与误差判定。
         """
         def smooth(x):
@@ -329,17 +348,17 @@ def main():
         a_wrap = smooth(2.0 * t - 1.0)              # 展开 -> 缠绕
         for j in range(TENTACLE_SEGS):
             u = (j + 1) / TENTACLE_SEGS
-            # (1) 卷曲态：rho = a*exp(b*theta)，盘在末端后方 (+z)，不遮挡果实
+            # (1) 卷曲态：螺旋袖套卷在腕部外围（避开 link7 网格径向），不遮挡前方果实
             theta = SPIRAL_THETA_MAX * u
-            rho = SPIRAL_A * math.exp(SPIRAL_B * theta)
-            z_coil = COIL_BACK_Z * (1.0 - u)
-            # (2) 展开态：沿法兰外侧（局部 +z）向外伸展，不是缩回臂体
-            r_ext = TENTACLE_ROOT_R + (TENTACLE_OPEN_R - TENTACLE_ROOT_R) * u
-            z_ext = 0.004 + TENTACLE_LEN * u
-            # (3) 缠绕态：环绕果实体——球心在 link7 原点（= 被测点/草莓标记位置）
+            rho = 0.055 + 0.02 * u
+            z_coil = 0.03 - 0.09 * u
+            # (2) 展开态：沿法兰外侧 +z 向夹持中心（TCP，z=0.11）伸展并越过果实
+            r_ext = 0.015 + 0.02 * u
+            z_ext = 0.02 + 0.14 * u
+            # (3) 缠绕态：环绕果实体——球心在夹持中心 TCP（局部 [0,0,TOOL_OFFSET_Z]）
             phi = WRAP_PHI0 + (WRAP_PHI1 - WRAP_PHI0) * u
             rr_wrap = WRAP_R * math.sin(phi)
-            z_wrap = WRAP_R * math.cos(phi)
+            z_wrap = TOOL_OFFSET_Z + WRAP_R * math.cos(phi)
             for i in range(TENTACLE_COUNT):
                 ang_c = theta + 2.0 * math.pi * i / TENTACLE_COUNT
                 x_coil, y_coil = rho * math.cos(ang_c), rho * math.sin(ang_c)
@@ -396,7 +415,7 @@ def main():
         q_drop = solve_ik(robot, ee_idx, BASKET_DROP, seed=q_start)
         for j in range(NDOF):
             p.resetJointState(robot, j, q_drop[j])
-        drop_err = math.dist(fk_ee(robot, ee_idx)[0], BASKET_DROP)
+        drop_err = math.dist(fk_pos(robot, ee_idx), BASKET_DROP)
         drop_in_lim, _ = check_limits(q_drop)
         for j in range(NDOF):                         # 放果段起始 = 当前草莓点伺服后的姿态
             p.resetJointState(robot, j, q_start[j])
@@ -410,9 +429,9 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
+            tcp = fk_pos(robot, ee_idx)   # 果实跟随夹持中心（TCP）
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(pos[0]), float(pos[1]), float(pos[2])],
+                                              [float(tcp[0]), float(tcp[1]), float(tcp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             q_prev = list(q_cmd)
             if writer is not None and k % args.every == 0:
@@ -424,9 +443,9 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
+            tcp = fk_pos(robot, ee_idx)   # 果实跟随夹持中心（TCP）
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(pos[0]), float(pos[1]), float(pos[2])],
+                                              [float(tcp[0]), float(tcp[1]), float(tcp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             if writer is not None and k % args.every == 0:
                 tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
@@ -452,8 +471,8 @@ def main():
         q = solve_ik(robot, ee_idx, target, seed=q_cur)   # 以上一点实际关节角作初值（解连续性）
         for j in range(NDOF):                         # 设置 IK 解测静态残差
             p.resetJointState(robot, j, q[j])
-        ee_frame, ee_com = fk_ee(robot, ee_idx)
-        err_ik = math.dist(ee_frame, target)
+        ee_com = fk_ee(robot, ee_idx)[1]              # COM 备查列（相对 TCP，仅记录不判定）
+        err_ik = math.dist(fk_pos(robot, ee_idx), target)   # TCP 口径
         err_com = math.dist(ee_com, target)
         in_lim, bad = check_limits(q)
 
@@ -483,7 +502,7 @@ def main():
                 targetVelocities=[0.0] * NDOF, forces=FORCES,
                 positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+            ee = fk_pos(robot, ee_idx)
             steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
             if steady >= STEADY_N and converge_step is None:
                 converge_step = k
@@ -497,12 +516,12 @@ def main():
                 targetVelocities=[0.0] * NDOF, forces=FORCES,
                 positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+            ee = fk_pos(robot, ee_idx)
             steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
             if steady >= STEADY_N:
                 converge_step = ANIM_STEPS + HOLD_STEPS + k
                 break
-        ee_track = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+        ee_track = fk_pos(robot, ee_idx)
         err_track = math.dist(ee_track, target)
         q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]   # 伺服后实际关节角
 
