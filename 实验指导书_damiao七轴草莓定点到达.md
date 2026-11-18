@@ -1165,6 +1165,114 @@ if __name__ == "__main__":
     main()
 ```
 
+演示素材派生脚本（由完整运行录像生成答辩用 GIF 与六帧关键帧拼图；xArm6 版为临时生成，本版固化为脚本，可复算）：
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""make_demo_assets.py —— 从 results/reach_demo.mp4 派生答辩演示素材。
+
+产出（与 xArm6 版同规格，便于答辩沿用同一套素材用法）：
+  results/reach_demo.gif       400×300 / 195 帧 / 6 fps 循环动图
+  results/reach_keyframes.png  1440×784 六帧拼图（含帧号、时间戳与阶段中文标签）
+
+用法：
+    python make_demo_assets.py
+    python make_demo_assets.py --gif-size 400x300 --gif-stride 5 --fps 6
+"""
+import argparse
+import os
+
+import imageio
+import imageio.v3 as iio
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MP4 = os.path.join(HERE, "results", "reach_demo.mp4")
+GIF = os.path.join(HERE, "results", "reach_demo.gif")
+KF = os.path.join(HERE, "results", "reach_keyframes.png")
+
+FONT_CANDIDATES = ["/mnt/c/Windows/Fonts/msyh.ttc", "/mnt/c/Windows/Fonts/simhei.ttf",
+                   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+
+# 关键帧：帧号 -> (阶段标签, 补充说明)
+KEYFRAMES = {
+    0:    ("起始：触手卷曲待机", "末端后方对数螺旋团"),
+    100:  ("接近目标：保持卷曲", "随末端移动，果实为红球标记"),
+    200:  ("到位前：反向展开", "触手由卷曲转为伸展"),
+    430:  ("缠绕包覆果实", "沿球面缠绕，纯视觉无接触力"),
+    700:  ("搬运入篮", "果实随末端移动到篮内"),
+    975:  ("终态：篮中 5 颗", "全部目标点已判定通过"),
+}
+
+
+def load_font(size):
+    for p in FONT_CANDIDATES:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                continue
+    print("  [警告] 未找到可用字体，标签可能显示为方块")
+    return ImageFont.load_default()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--gif-size", default="400x300")
+    ap.add_argument("--gif-stride", type=int, default=5, help="每隔 N 帧取 1 帧进 GIF")
+    ap.add_argument("--fps", type=float, default=6.0, help="GIF 播放帧率")
+    ap.add_argument("--colors", type=int, default=32, help="GIF 调色板颜色数（越大越大越清晰）")
+    args = ap.parse_args()
+    gw, gh = (int(v) for v in args.gif_size.lower().split("x"))
+
+    if not os.path.exists(MP4):
+        raise SystemExit(f"[错误] 找不到 {MP4}，请先跑 damiao_reach_demo.py 生成完整运行录像")
+    frames = iio.imread(MP4, plugin="FFMPEG")
+    total = frames.shape[0]
+    print(f"[素材] 源录像 {total} 帧 @ {frames.shape[2]}×{frames.shape[1]}")
+
+    # ---------- GIF 循环动图 ----------
+    picks = list(range(0, total, args.gif_stride))
+    gif_frames = [np.asarray(Image.fromarray(frames[i]).resize((gw, gh), Image.LANCZOS))
+                  for i in picks]
+    # 量化到自适应调色板并跨帧优化：官方 STL 场景色彩数远多于 xArm6 版，
+    # 不量化会让 GIF 涨到 4 MB+；量化后与原仓库同量级（数百 KB）。
+    pal = [Image.fromarray(f).convert("P", palette=Image.ADAPTIVE, colors=args.colors)
+           for f in gif_frames]
+    # 不设 disposal=2：整帧存储会让 GIF 体积翻倍；默认 disposal 允许帧间差分
+    pal[0].save(GIF, save_all=True, append_images=pal[1:],
+                duration=int(round(1000.0 / args.fps)), loop=0, optimize=True)
+    print(f"[素材] GIF：{gw}×{gh} / {len(gif_frames)} 帧 / {args.fps:g} fps / "
+          f"{args.colors} 色 / {os.path.getsize(GIF) // 1024} KB -> {os.path.relpath(GIF, HERE)}")
+
+    # ---------- 六帧关键帧拼图（3 列 × 2 行） ----------
+    cw, ch = 480, 392
+    font_lbl = load_font(22)
+    font_sub = load_font(16)
+    canvas = Image.new("RGB", (cw * 3, ch * 2), (18, 18, 20))
+    draw = ImageDraw.Draw(canvas)
+    for k, idx in enumerate(sorted(KEYFRAMES)):
+        if idx >= total:
+            idx = total - 1
+        img = Image.fromarray(frames[idx]).resize((cw, ch), Image.LANCZOS)
+        x, y = (k % 3) * cw, (k // 3) * ch
+        canvas.paste(img, (x, y))
+        label, sub = KEYFRAMES[idx]
+        draw.rectangle([x, y + ch - 58, x + cw, y + ch], fill=(0, 0, 0))
+        draw.text((x + 10, y + ch - 52), f"#{idx}  t={idx / 30:.1f}s  {label}",
+                  font=font_lbl, fill=(255, 235, 120))
+        draw.text((x + 10, y + ch - 26), sub, font=font_sub, fill=(225, 225, 225))
+    canvas.save(KF)
+    print(f"[素材] 关键帧拼图：{canvas.size[0]}×{canvas.size[1]} / 6 帧 / "
+          f"{os.path.getsize(KF) // 1024} KB -> {os.path.relpath(KF, HERE)}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
 ### 步骤七附加：负向验证（证明预筛逻辑存在且工作）
 
 ```bash
@@ -1202,6 +1310,7 @@ python select_targets.py                         # 目标点选取工具（可�
 | 默认 960×720 / 每 8 步 | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **976 帧，渲染 235.6 s，全程 235.8 s** |
 | 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 235.6 s < 5 分钟预算，未触发降级分支） |
 | `--no-video` | 1 帧（截图） | **0.2 s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |
+| 素材派生 `make_demo_assets.py` | GIF 196 帧 / 关键帧拼图 6 帧 | **GIF 400×300 / 196 帧 / 6 fps / 32 色 / 795 KB；拼图 1440×784 / 269 KB**（由同一次运行的 MP4 派生） |
 
 ER_TINY_RENDERER 为 CPU 软件渲染，不依赖 WSLg/GPU，但高分辨率下耗时不可忽略。**渲染耗时由脚本自动打印并应在结果表登记**。若默认模式渲染超过 5 分钟，属正常范围；超过 15 分钟改用降级分支重跑。v8 实测 235.6 s 落在预算内（帧数与 xArm6 版同为 976 帧，来自同样 5 段抓放演示），故降级分支未运行；该分支的耗时不作任何结论引用。达妙臂 STL 更大（16 个官方网格，合计约 33 MB），单帧渲染耗时与 xArm6 版同量级。
 
@@ -1326,6 +1435,7 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 - [x] 加载自检 `python test_load.py`：**ALL PASS**（7 关节、7 组官方限位逐项 PASS、末端 `link7` 索引按名反查 = 6、零位 FK 偏差 0.000 mm、渲染 307200 bytes）
 - [x] 5 点 err_ik / err_track / err_com / 限位判定 / 收敛步 / 结论（§8.3 表）：已按 2026-11-18 全量重跑的 `results/reach_results.csv` 回填，**5/5 通过**，逐点残差 0.000–0.001 mm
 - [x] 渲染耗时：默认模式 **976 帧 / 235.6 s**（§8.2）；`render_time_s` = 235.6；`--no-video` 0.2 s；降级模式**未执行**（未触发）
+- [x] 演示素材派生：`make_demo_assets.py` → `results/reach_demo.gif`（400×300 / 196 帧 / 6 fps / 32 色 / 795 KB）+ `results/reach_keyframes.png`（1440×784 / 6 帧，含帧号、时间戳与三阶段中文标签 / 269 KB），均已目检
 - [x] 负向验证 `--check-out-of-range`：**退出码 2**，越界点（P_BAD_H 水平 0.80 m > 0.389 m；P_BAD_Z z=0.80 m ∉ [-0.111, 0.507]）在 IK 前被预筛拒绝
 - [x] 触手三阶段：3 根 x 6 段，卷曲(rho=a*exp(b*theta)) / 反向展开 / 球面缠绕包覆，逐颗循环、放果后回卷；示意参数、不进运动学链 / 误差判定 / CSV
 - [x] 演示层抓放：5 段，放果点 IK 残差 0.00 mm、限位 5/5 OK，篮子与果实入篮可见

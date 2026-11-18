@@ -136,6 +136,7 @@ def main():
     derive_py = inject("derive_damiao_urdf.py")
     test_load_py = inject("test_load.py")
     demo_py = inject("damiao_reach_demo.py")
+    assets_py = inject("make_demo_assets.py")
     urdf_head = "\n".join(inject("damiao_reach.urdf").splitlines()[:16])
 
     sec5 = """## 5. 生成达妙仿真专用派生 URDF（`derive_damiao_urdf.py`）
@@ -252,6 +253,11 @@ python test_load.py
 ```python
 """ + demo_py + """```
 
+演示素材派生脚本（由完整运行录像生成答辩用 GIF 与六帧关键帧拼图；xArm6 版为临时生成，本版固化为脚本，可复算）：
+
+```python
+""" + assets_py + """```
+
 """
     text = replace_section(text, "## 7. 主实验脚本（xarm6_reach_demo.py）", "### 步骤七附加：负向验证", sec7)
 
@@ -262,7 +268,7 @@ python test_load.py
 
     text = sub(text,
         "| 模式 | 帧数估算 | 实测耗时（2026-11-06，v5） |\n|------|----------|------------------------|\n| 默认 960×720 / 每 8 步 | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **976 帧，渲染 133.3 s，全程 133.6 s** |\n| 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 133.3 s < 5 分钟预算，未触发降级分支） |\n| `--no-video` | 1 帧（截图） | **0.1 s**（渲染 1 帧 0.1 s / 全程 0.1 s；伺服、抓放段与果实搬运仍完整执行） |",
-        "| 模式 | 帧数估算 | 实测耗时（2026-11-18，v8 达妙版） |\n|------|----------|------------------------|\n| 默认 960×720 / 每 8 步 | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **{frames} 帧，渲染 {render:.1f} s，全程 {total:.1f} s** |\n| 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 {render:.1f} s < 5 分钟预算，未触发降级分支） |\n| `--no-video` | 1 帧（截图） | **{novideo:.1f} s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |".format(
+        "| 模式 | 帧数估算 | 实测耗时（2026-11-18，v8 达妙版） |\n|------|----------|------------------------|\n| 默认 960×720 / 每 8 步 | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **{frames} 帧，渲染 {render:.1f} s，全程 {total:.1f} s** |\n| 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 {render:.1f} s < 5 分钟预算，未触发降级分支） |\n| `--no-video` | 1 帧（截图） | **{novideo:.1f} s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |\n| 素材派生 `make_demo_assets.py` | GIF 196 帧 / 关键帧拼图 6 帧 | **GIF 400×300 / 196 帧 / 6 fps / 32 色 / 795 KB；拼图 1440×784 / 269 KB**（由同一次运行的 MP4 派生） |".format(
             frames=stats["frames"], render=stats["render_time_s"], total=stats["total_time_s"],
             novideo=stats["no_video_time_s"]))
 
@@ -343,6 +349,7 @@ python test_load.py
 - [x] 加载自检 `python test_load.py`：**ALL PASS**（7 关节、7 组官方限位逐项 PASS、末端 `link7` 索引按名反查 = 6、零位 FK 偏差 0.000 mm、渲染 307200 bytes）
 - [x] 5 点 err_ik / err_track / err_com / 限位判定 / 收敛步 / 结论（§8.3 表）：已按 2026-11-18 全量重跑的 `results/reach_results.csv` 回填，**5/5 通过**，逐点残差 {emin:.3f}–{emax:.3f} mm
 - [x] 渲染耗时：默认模式 **{frames} 帧 / {render:.1f} s**（§8.2）；`render_time_s` = {render}；`--no-video` {novideo:.1f} s；降级模式**未执行**（未触发）
+- [x] 演示素材派生：`make_demo_assets.py` → `results/reach_demo.gif`（400×300 / 196 帧 / 6 fps / 32 色 / 795 KB）+ `results/reach_keyframes.png`（1440×784 / 6 帧，含帧号、时间戳与三阶段中文标签 / 269 KB），均已目检
 - [x] 负向验证 `--check-out-of-range`：**退出码 2**，越界点（P_BAD_H 水平 0.80 m > 0.389 m；P_BAD_Z z=0.80 m ∉ [-0.111, 0.507]）在 IK 前被预筛拒绝
 - [x] 触手三阶段：3 根 x 6 段，卷曲(rho=a*exp(b*theta)) / 反向展开 / 球面缠绕包覆，逐颗循环、放果后回卷；示意参数、不进运动学链 / 误差判定 / CSV
 - [x] 演示层抓放：5 段，放果点 IK 残差 {drop:.2f} mm、限位 5/5 OK，篮子与果实入篮可见
