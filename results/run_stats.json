@@ -1,16 +1,16 @@
 {
  "date": "2026-11-18",
  "platform": "达妙七轴谐波机械臂（官方 URDF 派生）",
- "frames": 976,
- "render_time_s": 234.4,
- "total_time_s": 234.7,
+ "frames": 1041,
+ "render_time_s": 261.9,
+ "total_time_s": 262.1,
  "no_video_time_s": 0.2,
  "wall_clock": "2026-11-18 21:00 → 21:04（末端装反修正后复跑）",
  "csv_rows": 5,
  "csv_cols": 21,
- "csv_bytes": 824,
- "mp4_bytes": 2819948,
- "png_bytes": 29311,
+ "csv_bytes": 839,
+ "mp4_bytes": 1055458,
+ "png_bytes": 29165,
  "threshold_m": 0.005,
  "passed": "5/5",
  "converge_step": 59,
@@ -62,5 +62,6 @@
    0.6080283203217098
   ],
   "r_max": 0.49164439402949084
- }
+ },
+ "flow": "观察→确定位置→夹取→合拢→抓住→移动→松开→果实掉落→回预设（逐颗循环）"
 }

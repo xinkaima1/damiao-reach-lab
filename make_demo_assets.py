@@ -76,18 +76,20 @@ def main():
                 duration=int(round(1000.0 / args.fps)), loop=0, optimize=True)
     # 回读真实参数：PIL 的 optimize 会合并连续相同的帧，写入帧数可能少于取样帧数，
     # 文档与 README 一律引用回读值（不引用估算值）。
-    with Image.open(GIF) as chk:
-        real_n = 0
-        try:
-            while True:
-                chk.seek(real_n)
-                real_n += 1
-        except EOFError:
-            pass
-        dur_ms = chk.info.get("duration", int(round(1000.0 / args.fps)))
-    print(f"[素材] GIF：{gw}×{gh} / 取样 {len(gif_frames)} 帧 → 实际写入 {real_n} 帧 / "
-          f"{dur_ms} ms 每帧（≈{1000.0 / dur_ms:.1f} fps，循环约 {real_n * dur_ms / 1000:.1f} s）/ "
-          f"{args.colors} 色 / {os.path.getsize(GIF) // 1024} KB -> {os.path.relpath(GIF, HERE)}")
+    im_chk = Image.open(GIF)
+    real_n, durs = 0, []
+    try:
+        while True:
+            durs.append(im_chk.info.get("duration", 0))
+            im_chk.seek(real_n + 1)
+            real_n += 1
+    except EOFError:
+        pass
+    im_chk.close()
+    loop_s = sum(durs) / 1000.0
+    print(f"[素材] GIF：{gw}×{gh} / 取样 {len(gif_frames)} 帧 → 实际写入 {real_n} 帧 "
+          f"（PIL 合并静止帧） / 循环 {loop_s:.1f} s / {args.colors} 色 / "
+          f"{os.path.getsize(GIF) // 1024} KB -> {os.path.relpath(GIF, HERE)}")
 
     # ---------- 六帧关键帧拼图（3 列 × 2 行） ----------
     cw, ch = 480, 392
