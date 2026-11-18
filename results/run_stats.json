@@ -2,14 +2,14 @@
  "date": "2026-11-18",
  "platform": "达妙七轴谐波机械臂（官方 URDF 派生）",
  "frames": 976,
- "render_time_s": 237.0,
- "total_time_s": 237.2,
+ "render_time_s": 245.7,
+ "total_time_s": 246.0,
  "no_video_time_s": 0.2,
- "wall_clock": "20:41 → 20:45（含末端朝向修正的复跑）",
+ "wall_clock": "2026-11-18 21:00 → 21:04（末端装反修正后复跑）",
  "csv_rows": 5,
  "csv_cols": 21,
  "csv_bytes": 827,
- "mp4_bytes": 2630704,
+ "mp4_bytes": 2743675,
  "png_bytes": 29629,
  "threshold_m": 0.005,
  "passed": "5/5",
@@ -43,5 +43,6 @@
   12
  ],
  "note": "静态重力矩为 numpy 演算（g=9.81，6000 组限位内采样，未含减速器效率与动态项），非 PyBullet 实跑、非带载精度验证",
- "ee_frame_fix": "触手/果实改在 link7 局部坐标系生成并乘 link7 世界旋转矩阵（2026-11-18 用户指出朝向歪）"
+ "ee_frame_fix": "触手/果实改在 link7 局部坐标系生成并乘 link7 世界旋转矩阵（2026-11-18 用户指出朝向歪）",
+ "ee_mount_fix": "触手伸展方向由局部 -z（臂体内，装反）翻转为局部 +z（法兰外侧）；缠绕环心 = link7 原点 = 被测点/草莓标记位置；搬运果实跟随原点，无偏移；FRUIT_HELD_Z 常量删除"
 }

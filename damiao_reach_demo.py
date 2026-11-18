@@ -68,7 +68,6 @@ FRUIT_SLOTS = [                                 # 5 颗果实在篮内的留存�
     (0.13, -0.28, 0.115), (0.19, -0.28, 0.115), (0.16, -0.25, 0.115),
     (0.13, -0.22, 0.115), (0.19, -0.22, 0.115),
 ]
-FRUIT_HELD_Z = 0.03                             # 搬运时果实相对 link7 原点的偏移（**局部坐标系 -z 方向**，m）
 
 # ---- 演示层仿生触手：卷曲 -> 反向展开 -> 缠绕包覆（L1 纯视觉，不参与误差判定与物理） ----
 # 参数按 SpiRobs 官方「数根触手抓鸡蛋」演示的比例取一组示意几何值；
@@ -85,7 +84,7 @@ SPIRAL_A = 0.010                                   # 螺旋起始半径 (m，示
 SPIRAL_B = 0.22                                    # 螺旋增长系数 (示意)
 SPIRAL_THETA_MAX = 2.4 * math.pi                   # 卷曲总转角 (rad，示意，约 1.2 圈)
 COIL_BACK_Z = 0.050                                # 卷曲态向末端后方抬升 (m，示意)
-# 缠绕态：沿果实球面（球心在 link7 局部 -FRUIT_HELD_Z 处）自球顶绕到球底
+# 缠绕态：沿果实球面（球心 = link7 原点 = 被测点）自球顶绕到球底
 WRAP_R = 0.033                                     # 包覆球面半径 (m，略大于果实半径 0.025)
 WRAP_PHI0, WRAP_PHI1 = 0.18 * math.pi, 0.96 * math.pi   # 球顶到球底极角范围 (示意)
 WRAP_TWIST = 0.55 * math.pi                        # 缠绕时绕球轴的附加转角 (示意)
@@ -314,9 +313,9 @@ def main():
         """三阶段形态：向后卷曲(对数螺旋) -> 反向展开 -> 球面缠绕包覆果实。
 
         t in [0,1]：0 = 卷曲待机；0~0.5 由卷曲插值到展开；0.5~1 由展开插值到缠绕。
-        几何在 **link7 局部坐标系**（+z = 关节末端轴向，果实位于局部 -z 方向
-        FRUIT_HELD_Z 处），再乘 link7 的世界旋转矩阵落到世界系，因此触手与
-        果实始终与关节末端同朝向、始终互相包住。
+        几何在 **link7 局部坐标系**（+z = 法兰外侧方向，缠绕环心 = link7 原点 =
+        被测点/草莓标记位置），再乘 link7 的世界旋转矩阵落到世界系，因此触手
+        始终从法兰外侧伸出并与关节末端同朝向、始终包住果实。
         纯视觉，不参与误差判定。
         """
         def smooth(x):
@@ -334,13 +333,13 @@ def main():
             theta = SPIRAL_THETA_MAX * u
             rho = SPIRAL_A * math.exp(SPIRAL_B * theta)
             z_coil = COIL_BACK_Z * (1.0 - u)
-            # (2) 展开态：向果实方向反向伸展的近直线
+            # (2) 展开态：沿法兰外侧（局部 +z）向外伸展，不是缩回臂体
             r_ext = TENTACLE_ROOT_R + (TENTACLE_OPEN_R - TENTACLE_ROOT_R) * u
-            z_ext = -0.004 - TENTACLE_LEN * u
-            # (3) 缠绕态：沿果实球面自球顶绕到球底（球心在局部 -FRUIT_HELD_Z）
+            z_ext = 0.004 + TENTACLE_LEN * u
+            # (3) 缠绕态：环绕果实体——球心在 link7 原点（= 被测点/草莓标记位置）
             phi = WRAP_PHI0 + (WRAP_PHI1 - WRAP_PHI0) * u
             rr_wrap = WRAP_R * math.sin(phi)
-            z_wrap = -FRUIT_HELD_Z + WRAP_R * math.cos(phi)
+            z_wrap = WRAP_R * math.cos(phi)
             for i in range(TENTACLE_COUNT):
                 ang_c = theta + 2.0 * math.pi * i / TENTACLE_COUNT
                 x_coil, y_coil = rho * math.cos(ang_c), rho * math.sin(ang_c)
@@ -411,10 +410,9 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, R = ee_pose()
-            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
+            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(fp[0]), float(fp[1]), float(fp[2])],
+                                              [float(pos[0]), float(pos[1]), float(pos[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             q_prev = list(q_cmd)
             if writer is not None and k % args.every == 0:
@@ -426,10 +424,9 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, R = ee_pose()
-            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
+            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(fp[0]), float(fp[1]), float(fp[2])],
+                                              [float(pos[0]), float(pos[1]), float(pos[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             if writer is not None and k % args.every == 0:
                 tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
