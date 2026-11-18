@@ -165,6 +165,23 @@ def set_joints(robot, q):
         p.resetJointState(robot, i, q[i])
 
 
+def frame_from_z_near(d, R_seed):
+    """构造 +z 对准 d、滚转最接近 R_seed 的旋转矩阵。
+
+    爪（章鱼爪）绕工具轴旋转对称，**滚转不该被约束**——硬约束 6D 朝向会让 j7
+    为凑一个任意滚转角而整圈拧（用户 2026-11-18 指出「观察时老扭」）。这里只定
+    轴向（2 个自由度），滚转取种子姿态在该轴上的投影，最小化腕部扭转。
+    """
+    z = np.asarray(d, dtype=float)
+    z = z / np.linalg.norm(z)
+    x = np.asarray(R_seed, dtype=float)[:, 0]
+    x = x - (x @ z) * z                       # 投影到 ⊥z 平面
+    if np.linalg.norm(x) < 1e-3:              # 种子 x 与 d 近平行 → 退回确定性帧
+        return frame_from_z(d)
+    x = x / np.linalg.norm(x)
+    return np.column_stack([x, np.cross(z, x), z])
+
+
 def frame_from_z(d):
     """单位向量 d → 旋转矩阵（局部 +z 对准 d，无额外翻滚）。"""
     z = np.asarray(d, dtype=float)
@@ -237,7 +254,7 @@ def solve_ik(robot, ee_idx, target, seed=None, face=None):
     tgt = np.asarray(target, dtype=float)
     kw = {}
     if face is not None:
-        R_f = frame_from_z(face)
+        R_f = frame_from_z(face)              # 确定性朝向帧（滚转自由度改为靠过渡时长平滑，见 CSS 注释）
         kw["targetOrientation"] = mat_quat(R_f)
         tgt = tgt - R_f @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
     q = list(p.calculateInverseKinematics(
@@ -246,11 +263,28 @@ def solve_ik(robot, ee_idx, target, seed=None, face=None):
         lowerLimits=[lo for lo, _ in LIMITS],
         upperLimits=[hi for _, hi in LIMITS],
         jointRanges=[hi - lo for lo, hi in LIMITS],
-        restPoses=HOME,
+        restPoses=list(seed),          # nullspace 参考取「当前种子姿态」而非 HOME：避免 7 轴冗余下腕部甩到远处姿态（扭动）
         maxNumIterations=IK_MAX_ITER,
         residualThreshold=IK_TOL,
     )[:NDOF])
-    q, _ = refine_ik(robot, ee_idx, target, q)
+    q, err = refine_ik(robot, ee_idx, target, q, iters=100)
+    if err > 1e-4 and face is not None:
+        # 回退：滚转自由的帧在该点可能无解 → 改用确定性帧重解一次，取残差更小者
+        R_alt = frame_from_z(face)
+        q_alt = list(p.calculateInverseKinematics(
+            robot, ee_idx, [float(v) for v in np.asarray(target, dtype=float)
+                            - R_alt @ np.array([0.0, 0.0, TOOL_OFFSET_Z])],
+            targetOrientation=mat_quat(R_alt),
+            lowerLimits=[lo for lo, _ in LIMITS],
+            upperLimits=[hi for _, hi in LIMITS],
+            jointRanges=[hi - lo for lo, hi in LIMITS],
+            restPoses=list(seed),
+            maxNumIterations=IK_MAX_ITER,
+            residualThreshold=IK_TOL,
+        )[:NDOF])
+        q_alt, err_alt = refine_ik(robot, ee_idx, target, q_alt, iters=100)
+        if err_alt < err:
+            q, err = q_alt, err_alt
     return q
 
 
@@ -505,9 +539,13 @@ def main():
         p.resetBasePositionAndOrientation(ball, [float(p1[0]), float(p1[1]), float(p1[2])],
                                           [0.0, 0.0, 0.0, 1.0])
 
-    rows, q_cur, place_checks = [], list(HOME), []
-    for i in range(NDOF):                             # 伺服起始 = HOME
-        p.resetJointState(robot, i, HOME[i])
+    rows, place_checks = [], []
+    # 起始姿态 = 预设待机位（面向工作台的「预备」姿态）：避免从全零 HOME 到观察位
+    # 的一次性大幅腕部翻转（用户 2026-11-18 指出「观察时老扭」）
+    q_cur = solve_ik(robot, ee_idx, PRESET_TCP, seed=list(HOME),
+                     face=np.asarray(FACE_DIR, dtype=float) / np.linalg.norm(FACE_DIR))
+    for i in range(NDOF):
+        p.resetJointState(robot, i, q_cur[i])
     t_total0 = time.perf_counter()
 
     print(f"{'点':4s} {'目标(m)':22s} {'IK残差(mm)':>11s} {'伺服误差(mm)':>12s} "
@@ -527,7 +565,7 @@ def main():
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]   # 相位起点（solve_ik 之前抓取）
         q_obs = solve_ik(robot, ee_idx, p_obs, seed=q_cur, face=d)
         p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])
-        servo_to(q_from, q_obs, 1.2, 0.0, 0.0)
+        servo_to(q_from, q_obs, 1.8, 0.0, 0.0)
         # ② 确定位置：目标球脉冲 3 次（视觉确认）
         for c in range(3):
             p.changeVisualShape(ball_ids[name], -1,
