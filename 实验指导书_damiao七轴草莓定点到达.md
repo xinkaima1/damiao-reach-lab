@@ -1173,7 +1173,7 @@ if __name__ == "__main__":
 """make_demo_assets.py —— 从 results/reach_demo.mp4 派生答辩演示素材。
 
 产出（与 xArm6 版同规格，便于答辩沿用同一套素材用法）：
-  results/reach_demo.gif       400×300 / 195 帧 / 6 fps 循环动图
+  results/reach_demo.gif       400×300 / 约 178 帧 / 160 ms 每帧 循环动图（PIL 会合并静止帧，以回读值为准）
   results/reach_keyframes.png  1440×784 六帧拼图（含帧号、时间戳与阶段中文标签）
 
 用法：
@@ -1244,7 +1244,19 @@ def main():
     # 不设 disposal=2：整帧存储会让 GIF 体积翻倍；默认 disposal 允许帧间差分
     pal[0].save(GIF, save_all=True, append_images=pal[1:],
                 duration=int(round(1000.0 / args.fps)), loop=0, optimize=True)
-    print(f"[素材] GIF：{gw}×{gh} / {len(gif_frames)} 帧 / {args.fps:g} fps / "
+    # 回读真实参数：PIL 的 optimize 会合并连续相同的帧，写入帧数可能少于取样帧数，
+    # 文档与 README 一律引用回读值（不引用估算值）。
+    with Image.open(GIF) as chk:
+        real_n = 0
+        try:
+            while True:
+                chk.seek(real_n)
+                real_n += 1
+        except EOFError:
+            pass
+        dur_ms = chk.info.get("duration", int(round(1000.0 / args.fps)))
+    print(f"[素材] GIF：{gw}×{gh} / 取样 {len(gif_frames)} 帧 → 实际写入 {real_n} 帧 / "
+          f"{dur_ms} ms 每帧（≈{1000.0 / dur_ms:.1f} fps，循环约 {real_n * dur_ms / 1000:.1f} s）/ "
           f"{args.colors} 色 / {os.path.getsize(GIF) // 1024} KB -> {os.path.relpath(GIF, HERE)}")
 
     # ---------- 六帧关键帧拼图（3 列 × 2 行） ----------
@@ -1310,7 +1322,7 @@ python select_targets.py                         # 目标点选取工具（可�
 | 默认 960×720 / 每 8 步 | 每点到位段约 120 帧 + 演示层抓放段约 75 帧，共 ~975 帧 | **976 帧，渲染 235.6 s，全程 235.8 s** |
 | 降级 640×480 / 每 16 步 | 约 ~490 帧 | **未执行**（默认模式 235.6 s < 5 分钟预算，未触发降级分支） |
 | `--no-video` | 1 帧（截图） | **0.2 s**（渲染 1 帧；伺服、抓放段与果实搬运仍完整执行） |
-| 素材派生 `make_demo_assets.py` | GIF 196 帧 / 关键帧拼图 6 帧 | **GIF 400×300 / 196 帧 / 6 fps / 32 色 / 795 KB；拼图 1440×784 / 269 KB**（由同一次运行的 MP4 派生） |
+| 素材派生 `make_demo_assets.py` | GIF 178 帧（取样 196） / 关键帧拼图 6 帧 | **GIF 400×300 / 178 帧 / 160 ms 每帧（≈6 fps，循环约 28.5 s）/ 32 色 / 795 KB；拼图 1440×784 / 269 KB**（由同一次运行的 MP4 派生） |
 
 ER_TINY_RENDERER 为 CPU 软件渲染，不依赖 WSLg/GPU，但高分辨率下耗时不可忽略。**渲染耗时由脚本自动打印并应在结果表登记**。若默认模式渲染超过 5 分钟，属正常范围；超过 15 分钟改用降级分支重跑。v8 实测 235.6 s 落在预算内（帧数与 xArm6 版同为 976 帧，来自同样 5 段抓放演示），故降级分支未运行；该分支的耗时不作任何结论引用。达妙臂 STL 更大（16 个官方网格，合计约 33 MB），单帧渲染耗时与 xArm6 版同量级。
 
@@ -1435,7 +1447,7 @@ cp -r ~/xarm_lab/. /mnt/d/桌面/CRAIC/success/202607091551/temp_20261104_01/xar
 - [x] 加载自检 `python test_load.py`：**ALL PASS**（7 关节、7 组官方限位逐项 PASS、末端 `link7` 索引按名反查 = 6、零位 FK 偏差 0.000 mm、渲染 307200 bytes）
 - [x] 5 点 err_ik / err_track / err_com / 限位判定 / 收敛步 / 结论（§8.3 表）：已按 2026-11-18 全量重跑的 `results/reach_results.csv` 回填，**5/5 通过**，逐点残差 0.000–0.001 mm
 - [x] 渲染耗时：默认模式 **976 帧 / 235.6 s**（§8.2）；`render_time_s` = 235.6；`--no-video` 0.2 s；降级模式**未执行**（未触发）
-- [x] 演示素材派生：`make_demo_assets.py` → `results/reach_demo.gif`（400×300 / 196 帧 / 6 fps / 32 色 / 795 KB）+ `results/reach_keyframes.png`（1440×784 / 6 帧，含帧号、时间戳与三阶段中文标签 / 269 KB），均已目检
+- [x] 演示素材派生：`make_demo_assets.py` → `results/reach_demo.gif`（400×300 / 178 帧 / 160 ms 每帧 / 32 色 / 795 KB）+ `results/reach_keyframes.png`（1440×784 / 6 帧，含帧号、时间戳与三阶段中文标签 / 269 KB），均已目检
 - [x] 负向验证 `--check-out-of-range`：**退出码 2**，越界点（P_BAD_H 水平 0.80 m > 0.389 m；P_BAD_Z z=0.80 m ∉ [-0.111, 0.507]）在 IK 前被预筛拒绝
 - [x] 触手三阶段：3 根 x 6 段，卷曲(rho=a*exp(b*theta)) / 反向展开 / 球面缠绕包覆，逐颗循环、放果后回卷；示意参数、不进运动学链 / 误差判定 / CSV
 - [x] 演示层抓放：5 段，放果点 IK 残差 0.00 mm、限位 5/5 OK，篮子与果实入篮可见

@@ -3,7 +3,7 @@
 """make_demo_assets.py —— 从 results/reach_demo.mp4 派生答辩演示素材。
 
 产出（与 xArm6 版同规格，便于答辩沿用同一套素材用法）：
-  results/reach_demo.gif       400×300 / 195 帧 / 6 fps 循环动图
+  results/reach_demo.gif       400×300 / 约 178 帧 / 160 ms 每帧 循环动图（PIL 会合并静止帧，以回读值为准）
   results/reach_keyframes.png  1440×784 六帧拼图（含帧号、时间戳与阶段中文标签）
 
 用法：
@@ -74,7 +74,19 @@ def main():
     # 不设 disposal=2：整帧存储会让 GIF 体积翻倍；默认 disposal 允许帧间差分
     pal[0].save(GIF, save_all=True, append_images=pal[1:],
                 duration=int(round(1000.0 / args.fps)), loop=0, optimize=True)
-    print(f"[素材] GIF：{gw}×{gh} / {len(gif_frames)} 帧 / {args.fps:g} fps / "
+    # 回读真实参数：PIL 的 optimize 会合并连续相同的帧，写入帧数可能少于取样帧数，
+    # 文档与 README 一律引用回读值（不引用估算值）。
+    with Image.open(GIF) as chk:
+        real_n = 0
+        try:
+            while True:
+                chk.seek(real_n)
+                real_n += 1
+        except EOFError:
+            pass
+        dur_ms = chk.info.get("duration", int(round(1000.0 / args.fps)))
+    print(f"[素材] GIF：{gw}×{gh} / 取样 {len(gif_frames)} 帧 → 实际写入 {real_n} 帧 / "
+          f"{dur_ms} ms 每帧（≈{1000.0 / dur_ms:.1f} fps，循环约 {real_n * dur_ms / 1000:.1f} s）/ "
           f"{args.colors} 色 / {os.path.getsize(GIF) // 1024} KB -> {os.path.relpath(GIF, HERE)}")
 
     # ---------- 六帧关键帧拼图（3 列 × 2 行） ----------
