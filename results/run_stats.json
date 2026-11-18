@@ -2,15 +2,15 @@
  "date": "2026-11-18",
  "platform": "达妙七轴谐波机械臂（官方 URDF 派生）",
  "frames": 976,
- "render_time_s": 235.6,
- "total_time_s": 235.8,
+ "render_time_s": 237.0,
+ "total_time_s": 237.2,
  "no_video_time_s": 0.2,
- "wall_clock": "19:13:33 → 19:17:29",
+ "wall_clock": "20:41 → 20:45（含末端朝向修正的复跑）",
  "csv_rows": 5,
  "csv_cols": 21,
- "csv_bytes": 817,
- "mp4_bytes": 2741583,
- "png_bytes": 28952,
+ "csv_bytes": 827,
+ "mp4_bytes": 2630704,
+ "png_bytes": 29629,
  "threshold_m": 0.005,
  "passed": "5/5",
  "converge_step": 59,
@@ -42,5 +42,6 @@
   12,
   12
  ],
- "note": "静态重力矩为 numpy 演算（g=9.81，6000 组限位内采样，未含减速器效率与动态项），非 PyBullet 实跑、非带载精度验证"
+ "note": "静态重力矩为 numpy 演算（g=9.81，6000 组限位内采样，未含减速器效率与动态项），非 PyBullet 实跑、非带载精度验证",
+ "ee_frame_fix": "触手/果实改在 link7 局部坐标系生成并乘 link7 世界旋转矩阵（2026-11-18 用户指出朝向歪）"
 }

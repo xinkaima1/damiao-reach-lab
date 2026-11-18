@@ -68,7 +68,7 @@ FRUIT_SLOTS = [                                 # 5 颗果实在篮内的留存�
     (0.13, -0.28, 0.115), (0.19, -0.28, 0.115), (0.16, -0.25, 0.115),
     (0.13, -0.22, 0.115), (0.19, -0.22, 0.115),
 ]
-FRUIT_HELD_Z = 0.03                             # 搬运时果实相对 link7 原点的下方偏移（m）
+FRUIT_HELD_Z = 0.03                             # 搬运时果实相对 link7 原点的偏移（**局部坐标系 -z 方向**，m）
 
 # ---- 演示层仿生触手：卷曲 -> 反向展开 -> 缠绕包覆（L1 纯视觉，不参与误差判定与物理） ----
 # 参数按 SpiRobs 官方「数根触手抓鸡蛋」演示的比例取一组示意几何值；
@@ -85,7 +85,7 @@ SPIRAL_A = 0.010                                   # 螺旋起始半径 (m，示
 SPIRAL_B = 0.22                                    # 螺旋增长系数 (示意)
 SPIRAL_THETA_MAX = 2.4 * math.pi                   # 卷曲总转角 (rad，示意，约 1.2 圈)
 COIL_BACK_Z = 0.050                                # 卷曲态向末端后方抬升 (m，示意)
-# 缠绕态：沿果实球面（球心在 ee 下方 FRUIT_HELD_Z）自球顶绕到球底
+# 缠绕态：沿果实球面（球心在 link7 局部 -FRUIT_HELD_Z 处）自球顶绕到球底
 WRAP_R = 0.033                                     # 包覆球面半径 (m，略大于果实半径 0.025)
 WRAP_PHI0, WRAP_PHI1 = 0.18 * math.pi, 0.96 * math.pi   # 球顶到球底极角范围 (示意)
 WRAP_TWIST = 0.55 * math.pi                        # 缠绕时绕球轴的附加转角 (示意)
@@ -293,18 +293,37 @@ def main():
                                               basePosition=[0.0, 0.0, -1.0]))
     tentacle_t = 0.0                                 # 0=卷曲待机; 0~0.5 反向展开; 0.5~1 缠绕包覆; 1=夹住
 
+    def ee_pose():
+        """返回 (link7 原点世界位置, link7 世界旋转矩阵)。
+
+        末端演示层（触手 + 果实）必须在**末端局部坐标系**里生成，再按 link7 的
+        姿态变换到世界系：否则腕部一转，爪就与关节末端歪掉、也不夹住果实。
+        零位时 R = 单位阵，与历史画面一致。
+        """
+        ls = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)
+        pos = np.array(ls[4], dtype=float)
+        x, y, z, w = ls[5]
+        R = np.array([
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ])
+        return pos, R
+
     def update_tentacles(t):
         """三阶段形态：向后卷曲(对数螺旋) -> 反向展开 -> 球面缠绕包覆果实。
 
         t in [0,1]：0 = 卷曲待机；0~0.5 由卷曲插值到展开；0.5~1 由展开插值到缠绕。
-        全程使用世界坐标（相对 link7 原点 ee），不随末端姿态旋转，确保与果实的
-        视觉搬运位置 [ee - FRUIT_HELD_Z] 对齐。纯视觉，不参与误差判定。
+        几何在 **link7 局部坐标系**（+z = 关节末端轴向，果实位于局部 -z 方向
+        FRUIT_HELD_Z 处），再乘 link7 的世界旋转矩阵落到世界系，因此触手与
+        果实始终与关节末端同朝向、始终互相包住。
+        纯视觉，不参与误差判定。
         """
         def smooth(x):
             x = min(1.0, max(0.0, x))
             return x * x * (3.0 - 2.0 * x)
 
-        ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+        pos, R = ee_pose()
         ca = [math.cos(2.0 * math.pi * i / TENTACLE_COUNT) for i in range(TENTACLE_COUNT)]
         sa = [math.sin(2.0 * math.pi * i / TENTACLE_COUNT) for i in range(TENTACLE_COUNT)]
         a_ext = smooth(2.0 * t)                     # 卷曲 -> 展开
@@ -318,7 +337,7 @@ def main():
             # (2) 展开态：向果实方向反向伸展的近直线
             r_ext = TENTACLE_ROOT_R + (TENTACLE_OPEN_R - TENTACLE_ROOT_R) * u
             z_ext = -0.004 - TENTACLE_LEN * u
-            # (3) 缠绕态：沿果实球面自球顶绕到球底
+            # (3) 缠绕态：沿果实球面自球顶绕到球底（球心在局部 -FRUIT_HELD_Z）
             phi = WRAP_PHI0 + (WRAP_PHI1 - WRAP_PHI0) * u
             rr_wrap = WRAP_R * math.sin(phi)
             z_wrap = -FRUIT_HELD_Z + WRAP_R * math.cos(phi)
@@ -334,9 +353,10 @@ def main():
                 x = x1 + (x_wrap - x1) * a_wrap
                 y = y1 + (y_wrap - y1) * a_wrap
                 z = z1 + (z_wrap - z1) * a_wrap
-                wp = [ee[0] + x, ee[1] + y, ee[2] + z]
+                wp = pos + R @ np.array([x, y, z])
                 p.resetBasePositionAndOrientation(tentacle_ids[i * TENTACLE_SEGS + j],
-                                                  wp, [0.0, 0.0, 0.0, 1.0])
+                                                  [float(wp[0]), float(wp[1]), float(wp[2])],
+                                                  [0.0, 0.0, 0.0, 1.0])
 
     view = p.computeViewMatrixFromYawPitchRoll(
         cameraTargetPosition=(0.17, -0.08, 0.20), distance=1.0,
@@ -391,9 +411,10 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+            pos, R = ee_pose()
+            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [ee[0], ee[1], ee[2] - FRUIT_HELD_Z],
+                                              [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             q_prev = list(q_cmd)
             if writer is not None and k % args.every == 0:
@@ -405,9 +426,10 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            ee = p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[4]
+            pos, R = ee_pose()
+            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [ee[0], ee[1], ee[2] - FRUIT_HELD_Z],
+                                              [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             if writer is not None and k % args.every == 0:
                 tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
