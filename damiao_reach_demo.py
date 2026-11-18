@@ -558,26 +558,29 @@ def main():
         p_drop = (slot[0], slot[1], slot[2] + DROP_ABOVE)
         d = np.asarray(FACE_DIR, dtype=float)
         d = d / np.linalg.norm(d)
-        p_obs = (target[0] - d[0] * OBS_BACK, target[1] - d[1] * OBS_BACK,
-                 target[2] - d[2] * OBS_BACK)
+        # 视线方向：从初始位指向果实（观察 = 原地转向这个方向，不贴近）
+        d_aim = np.asarray(target, dtype=float) - np.asarray(PRESET_TCP, dtype=float)
+        d_aim = d_aim / np.linalg.norm(d_aim)
 
-        # ① 观察：转向果实观察位（爪轴朝向果实方向）
-        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]   # 相位起点（solve_ik 之前抓取）
-        q_obs = solve_ik(robot, ee_idx, p_obs, seed=q_cur, face=d)
+        # ① 观察：**在初始位置原地转向果实**（TCP 不动，只转爪轴对准视线方向）
+        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
+        q_aim = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur, face=d_aim)
         p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])
-        servo_to(q_from, q_obs, 1.8, 0.0, 0.0)
-        # ② 确定位置：目标球脉冲 3 次（视觉确认）
-        for c in range(3):
+        servo_to(q_from, q_aim, 0.9, 0.0, 0.0)
+        # ② 观察确认：原地小幅摆头（±4.5° 左/右/中），球体脉冲同步
+        side = np.cross(d_aim, np.array([0.0, 0.0, 1.0]))
+        side = side / np.linalg.norm(side)
+        for tag, tilt, dur in (("L", 0.08, 0.28), ("R", -0.08, 0.42), ("C", 0.0, 0.28)):
+            q_scan_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
+            aim = d_aim + side * tilt
+            q_scan = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_aim, face=aim / np.linalg.norm(aim))
             p.changeVisualShape(ball_ids[name], -1,
-                                rgbaColor=[0.85, 0.10, 0.10, 1.0] if c % 2 else [0.95, 0.80, 0.10, 1.0])
-            for k in range(24):
-                p.stepSimulation()
-                if writer is not None and k % args.every == 0:
-                    shoot()
+                                rgbaColor=[0.85, 0.10, 0.10, 1.0] if tag != "C" else [0.95, 0.80, 0.10, 1.0])
+            servo_to(q_scan_from, q_scan, dur, 0.0, 0.0)
 
         # ③ 夹取：TCP 从观察位沿爪轴推进到果实
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q = solve_ik(robot, ee_idx, target, seed=q_obs, face=d)
+        q = solve_ik(robot, ee_idx, target, seed=q_aim, face=d_aim)
         for j in range(NDOF):                          # 静态判定：关节置于 IK 解测纯残差
             p.resetJointState(robot, j, q[j])
         # 静态判定（TCP 口径）
@@ -585,7 +588,7 @@ def main():
         err_com = math.dist(ee_com, target)           # COM 备查距离
         err_ik = math.dist(fk_pos(robot, ee_idx), target)   # TCP 口径
         in_lim, bad = check_limits(q)
-        servo_to(q_from, q, 1.6, 0.0, 0.5)
+        servo_to(q_from, q, 1.8, 0.0, 0.5)
 
 
         # ④ 合拢：触手沿球面收拢（0.5→1.0），同步测定 TCP 收敛
