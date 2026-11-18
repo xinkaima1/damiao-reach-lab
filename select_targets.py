@@ -5,6 +5,10 @@
 本脚本按「官方 URDF 限位 + 官方几何」重新扫描 link7 可达空间，
 并从中挑出 5 个草莓簇状分布、IK 残差 ≤ 5 mm 的目标点。
 
+v8.3 说明：damiao_reach.urdf 已追加 ORCA Hand 固定子装配（link7 之后），
+本脚本只依赖达妙 7 个 revolute 关节与 link7 原点口径，ORCA 不进 IK 链、
+不影响可达空间扫描与选点结果（v8.3 复算与 v8.2 记录一致）。
+
 方法：
   1) 关节空间随机采样（限位内）→ 正运动学 → link7 可达点云；
   2) 按 z∈[Z_MIN,Z_MAX]、r≤RADIUS_MAX 过滤；

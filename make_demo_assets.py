@@ -26,8 +26,17 @@ KF = os.path.join(HERE, "results", "reach_keyframes.png")
 FONT_CANDIDATES = ["/mnt/c/Windows/Fonts/msyh.ttc", "/mnt/c/Windows/Fonts/simhei.ttf",
                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
 
-# 关键帧：帧号 -> (阶段标签, 补充说明)
+# 关键帧：帧号 -> (阶段标签, 补充说明)（v8.3 ORCA Hand 口径）
 KEYFRAMES = {
+    0:    ("起始：ORCA Hand 握合待机", "末端执行器为固定子装配"),
+    100:  ("接近目标：握合姿态保持", "随末端移动，果实为红球标记"),
+    200:  ("到位：指掌握合腔对准果实", "预设握合姿态，无开合动画"),
+    430:  ("握合腔包拢果实", "纯视觉移动，无接触力"),
+    700:  ("搬运入篮", "果实随末端移动到篮内"),
+    975:  ("终态：篮中 5 颗", "全部目标点已判定通过"),
+}
+# --legacy-tentacle 分支（v8.2 复现口径）使用的旧标签
+KEYFRAMES_LEGACY = {
     0:    ("起始：触手卷曲待机", "末端后方对数螺旋团"),
     100:  ("接近目标：保持卷曲", "随末端移动，果实为红球标记"),
     200:  ("到位前：反向展开", "触手由卷曲转为伸展"),
@@ -50,6 +59,9 @@ def load_font(size):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--legacy-tentacle", action="store_true",
+                    help="使用 v8.2 章鱼爪口径的关键帧标签（对应 --legacy-tentacle 录像）")
+    ap.add_argument("--mp4", default=None, help="源录像路径（默认 results/reach_demo.mp4）")
     ap.add_argument("--gif-size", default="400x300")
     ap.add_argument("--gif-stride", type=int, default=5, help="每隔 N 帧取 1 帧进 GIF")
     ap.add_argument("--fps", type=float, default=6.0, help="GIF 播放帧率")
@@ -57,9 +69,11 @@ def main():
     args = ap.parse_args()
     gw, gh = (int(v) for v in args.gif_size.lower().split("x"))
 
-    if not os.path.exists(MP4):
-        raise SystemExit(f"[错误] 找不到 {MP4}，请先跑 damiao_reach_demo.py 生成完整运行录像")
-    frames = iio.imread(MP4, plugin="FFMPEG")
+    src_mp4 = args.mp4 or MP4
+    keyframes = KEYFRAMES_LEGACY if args.legacy_tentacle else KEYFRAMES
+    if not os.path.exists(src_mp4):
+        raise SystemExit(f"[错误] 找不到 {src_mp4}，请先跑 damiao_reach_demo.py 生成完整运行录像")
+    frames = iio.imread(src_mp4, plugin="FFMPEG")
     total = frames.shape[0]
     print(f"[素材] 源录像 {total} 帧 @ {frames.shape[2]}×{frames.shape[1]}")
 
@@ -101,7 +115,7 @@ def main():
         img = Image.fromarray(frames[idx]).resize((cw, ch), Image.LANCZOS)
         x, y = (k % 3) * cw, (k // 3) * ch
         canvas.paste(img, (x, y))
-        label, sub = KEYFRAMES[idx]
+        label, sub = keyframes[idx]
         draw.rectangle([x, y + ch - 58, x + cw, y + ch], fill=(0, 0, 0))
         draw.text((x + 10, y + ch - 52), f"#{idx}  t={idx / 30:.1f}s  {label}",
                   font=font_lbl, fill=(255, 235, 120))

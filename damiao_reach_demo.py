@@ -3,15 +3,23 @@
 damiao_reach_demo.py - 达妙七轴谐波机械臂 草莓定点到达仿真
                       （位置-only IK + 梯形轨迹 + 位置伺服执行）。
 
+v8.3（2026-11-18，ORCA Hand 末端执行器版）：
+  * 课设立论 = 仿生机械臂本体；末端执行器为可替换模块。
+  * 末端执行器换成 ORCA Hand 官方 URDF（srl-ethz/orcahand_description，MIT）：
+    以 fixed joint 挂接在 link7 之后（joint_orca_wrist），作为固定子装配呈现——
+    惯量置零、17 个 revolute 锁定为预设握合姿态、不参与仿真接触（碰撞过滤关闭）；
+    不进 IK 链、不改 5 个目标点、不改误差口径（判定点仍为 link7 原点）。
+    腱绳耦合未在官方 URDF 中建模，本仿真不含腱绳驱动、接触力学与夹持力。
+  * v8.2 的卷曲仿生章鱼爪演示层保留为 --legacy-tentacle 分支（默认关闭），
+    保证 v8.2 可复现；果实搬运在两种模式下都是纯视觉移动，不写 CSV、不参与判定。
+
 迁移说明（2026-11-18，xarm6_reach_demo.py → 本文件）：
   * 模型：达妙官方开源七轴 URDF 派生版 damiao_reach.urdf（仅裁剪官方夹爪子树，
     几何/惯量/限位逐字未改，见 derive_damiao_urdf.py 与附录 B）；
   * 自由度 6 → 7，末端 link link6 → link7（索引按 link 名反查，不硬编码）；
   * HOME / LIMITS / FORCES / TARGETS / 预筛包络 / CSV 字段全部换成达妙官方值；
   * IK 改为两段式：内置求解器出粗解（保留限位与 nullspace 参考）+ 位置-only 数值精修，
-    原因见 refine_ik() 注释（7 轴冗余下内置求解器远距离初值会停在 3–8 mm 局部解）；
-  * 末端执行器仍为仿真内已有的卷曲仿生章鱼爪演示层（纯视觉），原样保留，
-    未引入达妙官方夹爪。
+    原因见 refine_ik() 注释（7 轴冗余下内置求解器远距离初值会停在 3–8 mm 局部解）。
 
 产物：results/reach_results.csv、results/reach_demo.mp4、results/scene.png、控制台汇总表
 退出码：0 = 5 点全部通过（两重静态判定 + 伺服跟踪）；1 = 存在未达标点（结果如实保留）；
@@ -19,6 +27,7 @@ damiao_reach_demo.py - 达妙七轴谐波机械臂 草莓定点到达仿真
 """
 import argparse
 import csv
+import json
 import math
 import os
 import time
@@ -84,7 +93,13 @@ SPIRAL_A = 0.010                                   # 螺旋起始半径 (m，示
 SPIRAL_B = 0.22                                    # 螺旋增长系数 (示意)
 SPIRAL_THETA_MAX = 2.4 * math.pi                   # 卷曲总转角 (rad，示意，约 1.2 圈)
 COIL_BACK_Z = 0.050                                # 卷曲态向末端后方抬升 (m，示意)
-# 缠绕态：沿果实球面（球心 = link7 原点 = 被测点）自球顶绕到球底
+# ---- 末端演示层避让参数（与 v8.3 ORCA 挂接同口径，2026-11-18 用户诊断后修正） ----
+# 干涉根因：缠绕环心原压在被测点（球心 = link7 原点），环半径 0.033 m 而 link7 网格
+#（含相机安装板）分布于原点周围 → 环陷入 URDF 网格，看似「装反」。
+# 修正：爪体（掌心）挂到网格之外，缠绕环心对准果实保持点（局部 -z 0.03 m），
+# 判定点仍为 link7 原点，不重算（与 v8.3「不进 IK 链、不改误差口径」一致）。
+FRUIT_HELD_Z = 0.03                             # 果实保持点：link7 局部 -z 方向偏移（m，v8.3 ORCA 同口径）
+TENTACLE_PALM_XYZ = (-0.10, 0.0, -0.03)         # 触手掌心：link7 局部坐标（避开 link7 网格，与 ORCA 挂接同侧）
 WRAP_R = 0.033                                     # 包覆球面半径 (m，略大于果实半径 0.025)
 WRAP_PHI0, WRAP_PHI1 = 0.18 * math.pi, 0.96 * math.pi   # 球顶到球底极角范围 (示意)
 WRAP_TWIST = 0.55 * math.pi                        # 缠绕时绕球轴的附加转角 (示意)
@@ -93,6 +108,16 @@ EXTEND_START = 0.75                                # 到位轨迹段中开始反
 WRAP_END = 0.30                                    # 保持段中完成缠绕包覆的归一化时刻
 RELEASE_START = 0.70                               # 入篮保持段中开始释放回卷的归一化时刻
 
+# ---- v8.3 ORCA Hand 末端执行器（固定子装配，纯视觉呈现；来源 srl-ethz/orcahand_description，MIT） ----
+# 官方 URDF 未建模腱绳耦合（无 mimic/transmission），17 个 revolute 已在派生 URDF 中
+# 锁定为预设握合姿态（均在官方限位内，锁定角见 derive_orcahand_urdf.py）；本脚本不做
+# 开合动画、不做接触力学。collision mesh 在 URDF 中保留，但运行时按组屏蔽接触。
+ORCA_LINK_PREFIX = "orca_"                        # ORCA 子装配 link 名前缀（派生时加 prefix）
+ORCA_MOUNT_JOINT = "joint_orca_wrist"             # link7 -> orca_root 的 fixed 挂接关节名
+ORCA_COLLISION_GROUP, ORCA_COLLISION_MASK = 2, 0  # 碰撞过滤：group=2 / mask=0 → 不参与任何接触
+ORCA_OFFICIAL_URDF = "third_party/orcahand/orcahand_right.urdf"  # 官方展开 URDF（含官方质量）
+G = 9.81                                          # --with-orca-mass 模式的重力（m/s²）
+
 
 def resolve_ee_index(robot):
     """按末端 link 名反查真实 link 索引（禁止硬编码索引）。"""
@@ -100,6 +125,38 @@ def resolve_ee_index(robot):
         if p.getJointInfo(robot, i)[12].decode() == EE_NAME:
             return i
     raise RuntimeError(f"未找到末端 link：{EE_NAME}")
+
+
+def resolve_orca_links(robot):
+    """按 link 名前缀反查 ORCA 子装配的全部 link 索引（不硬编码）。"""
+    idx = [i for i in range(p.getNumJoints(robot))
+           if p.getJointInfo(robot, i)[12].decode().startswith(ORCA_LINK_PREFIX)]
+    if not idx:
+        raise RuntimeError("未找到 ORCA 子装配（orca_* link），请检查 damiao_reach.urdf 派生")
+    return idx
+
+
+def read_orca_official_inertials(path=ORCA_OFFICIAL_URDF):
+    """从官方展开 URDF 读取 ORCA 各 link 的官方质量与惯量主对角（--with-orca-mass 用）。"""
+    import re as _re
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    out = {}
+    for m in _re.finditer(r'<link\s+name="([^"]+)">(.*?)</link>', text, _re.S):
+        name, body = m.group(1), m.group(2)
+        if not name.startswith(ORCA_LINK_PREFIX):
+            continue
+        mass = _re.search(r'<mass\s+value="([^"]+)"', body)
+        if not mass:
+            continue
+        inertia = _re.search(r'<inertia\s+([^/]*)/>', body)
+        diag = [0.0, 0.0, 0.0]
+        if inertia:
+            for k, key in enumerate(("ixx", "iyy", "izz")):
+                kv = _re.search(rf'{key}\s*=\s*"([^"]+)"', inertia.group(1))
+                diag[k] = float(kv.group(1)) if kv else 0.0
+        out[name] = (float(mass.group(1)), diag)
+    return out
 
 
 def precheck(point, name):
@@ -229,6 +286,10 @@ def main():
     ap.add_argument("--no-video", action="store_true", help="跳过视频导出（只出 CSV/截图，快速验证）")
     ap.add_argument("--check-out-of-range", action="store_true",
                     help="负向验证：注入越界点，确认脚本在 IK 前拒绝（退出码 2）")
+    ap.add_argument("--legacy-tentacle", action="store_true",
+                    help="v8.2 卷曲仿生章鱼爪演示层分支（复现 v8.2；默认关闭，默认为 ORCA Hand）")
+    ap.add_argument("--with-orca-mass", action="store_true",
+                    help="带载对照实验：启用重力 + ORCA 官方质量（独立 CSV，不与无重力基线数字混报）")
     args = ap.parse_args()
 
     if args.check_out_of_range:
@@ -243,10 +304,24 @@ def main():
 
     w, h = (int(x) for x in args.res.lower().split("x"))
     os.makedirs("results", exist_ok=True)
+    if args.with_orca_mass:                            # 独立产物，禁止与无重力基线混用
+        csv_name, mp4_name, stats_name = ("results/reach_results_orca_mass.csv",
+                                          "results/reach_demo_orca_mass.mp4",
+                                          "results/run_stats_orca_mass.json")
+    else:
+        csv_name, mp4_name = "results/reach_results.csv", "results/reach_demo.mp4"
+        # --no-video 的统计写入独立文件（含实测耗时），不覆盖完整运行的 run_stats.json
+        stats_name = ("results/run_stats_no_video.json" if args.no_video
+                      else "results/run_stats.json")
 
     p.connect(p.DIRECT)
     p.setTimeStep(1.0 / SIM_HZ)                       # 240 Hz 仿真步长
-    p.setGravity(0, 0, 0)                             # 无重力设定（§0 第 6 条）：重力前馈补偿属后续工作
+    if args.with_orca_mass:                           # 带载对照实验（口径与默认模式不同）
+        p.setGravity(0, 0, -G)
+        print(f"[口径] --with-orca-mass：重力 {G} m/s² + ORCA 官方质量，"
+              f"独立 CSV（{csv_name}），数字不与无重力基线混报")
+    else:
+        p.setGravity(0, 0, 0)                         # 无重力设定（§0 第 6 条）：重力前馈补偿属后续工作
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.loadURDF("plane.urdf")                          # 地面
     # 栽培架示意（绿色薄板，仅视觉）
@@ -256,8 +331,23 @@ def main():
                       basePosition=[0.16, -0.06, 0.0005])
     robot = p.loadURDF("damiao_reach.urdf", useFixedBase=True)
     ee_idx = resolve_ee_index(robot)                  # 末端 link 索引（按名反查）
+    orca_idx = resolve_orca_links(robot)              # ORCA 子装配 link 索引（按前缀反查）
+    for i in orca_idx:                                # ORCA 不参与仿真接触（碰撞过滤屏蔽）
+        p.setCollisionFilterGroupMask(robot, i, ORCA_COLLISION_GROUP, ORCA_COLLISION_MASK)
+    orca_mass_total = sum(p.getDynamicsInfo(robot, i)[0] for i in orca_idx)
     print(f"[模型] 达妙七轴派生 URDF 加载成功，末端 link = {EE_NAME}，link 索引 = {ee_idx}，"
-          f"可动关节数 = {p.getNumJoints(robot)}")
+          f"link 总数 = {p.getNumJoints(robot)}（其中 ORCA 子装配 {len(orca_idx)} 个）")
+    print(f"[末端] ORCA Hand 固定子装配：惯量置零合计 {orca_mass_total:.3f} kg，"
+          f"碰撞过滤 group={ORCA_COLLISION_GROUP}/mask={ORCA_COLLISION_MASK}（不参与接触），"
+          f"17 个 revolute 锁定为预设握合姿态（不进 IK 链、不参与判定）")
+    if args.with_orca_mass:                           # 官方质量注入（仅本模式）
+        official = read_orca_official_inertials()
+        for i in orca_idx:
+            nm = p.getJointInfo(robot, i)[12].decode()
+            mass, diag = official[nm]
+            p.changeDynamics(robot, i, mass=mass, localInertiaDiagonal=diag)
+        orca_mass_total = sum(p.getDynamicsInfo(robot, i)[0] for i in orca_idx)
+        print(f"[带载] ORCA 官方质量注入合计 {orca_mass_total:.3f} kg（tower 0.9 kg + 全惯量）")
 
     # 5 个草莓目标点（红球标记）
     ball_ids = {}
@@ -313,9 +403,10 @@ def main():
         """三阶段形态：向后卷曲(对数螺旋) -> 反向展开 -> 球面缠绕包覆果实。
 
         t in [0,1]：0 = 卷曲待机；0~0.5 由卷曲插值到展开；0.5~1 由展开插值到缠绕。
-        几何在 **link7 局部坐标系**（+z = 法兰外侧方向，缠绕环心 = link7 原点 =
-        被测点/草莓标记位置），再乘 link7 的世界旋转矩阵落到世界系，因此触手
-        始终从法兰外侧伸出并与关节末端同朝向、始终包住果实。
+        几何以 **掌心**（link7 局部 TENTACLE_PALM_XYZ，避开 link7 网格）为原点、
+        缠绕环心对准**果实保持点**（局部 -FRUIT_HELD_Z），再乘 link7 的世界旋转
+        矩阵落到世界系——触手随腕部姿态同步、从网格外侧包住果实，不与 URDF 干涉
+        （2026-11-18 用户诊断：环心压在被测点导致爪环陷入 link7 网格，看似装反）。
         纯视觉，不参与误差判定。
         """
         def smooth(x):
@@ -323,6 +414,7 @@ def main():
             return x * x * (3.0 - 2.0 * x)
 
         pos, R = ee_pose()
+        palm = pos + R @ np.array(TENTACLE_PALM_XYZ)   # 掌心（爪体根部，在网格之外）
         ca = [math.cos(2.0 * math.pi * i / TENTACLE_COUNT) for i in range(TENTACLE_COUNT)]
         sa = [math.sin(2.0 * math.pi * i / TENTACLE_COUNT) for i in range(TENTACLE_COUNT)]
         a_ext = smooth(2.0 * t)                     # 卷曲 -> 展开
@@ -332,14 +424,14 @@ def main():
             # (1) 卷曲态：rho = a*exp(b*theta)，盘在末端后方 (+z)，不遮挡果实
             theta = SPIRAL_THETA_MAX * u
             rho = SPIRAL_A * math.exp(SPIRAL_B * theta)
-            z_coil = COIL_BACK_Z * (1.0 - u)
-            # (2) 展开态：沿法兰外侧（局部 +z）向外伸展，不是缩回臂体
+            z_coil = 0.02 * (1.0 - u)     # 卷曲盘收在掌心附近
+            # (2) 展开态：指头从掌心向果实保持点方向（局部 -z）伸展并越过果实
             r_ext = TENTACLE_ROOT_R + (TENTACLE_OPEN_R - TENTACLE_ROOT_R) * u
-            z_ext = 0.004 + TENTACLE_LEN * u
-            # (3) 缠绕态：环绕果实体——球心在 link7 原点（= 被测点/草莓标记位置）
+            z_ext = 0.02 - TENTACLE_LEN * u
+            # (3) 缠绕态：环绕果实体——球心在果实保持点（局部 -FRUIT_HELD_Z，避开 link7 网格）
             phi = WRAP_PHI0 + (WRAP_PHI1 - WRAP_PHI0) * u
             rr_wrap = WRAP_R * math.sin(phi)
-            z_wrap = WRAP_R * math.cos(phi)
+            z_wrap = -FRUIT_HELD_Z + WRAP_R * math.cos(phi)
             for i in range(TENTACLE_COUNT):
                 ang_c = theta + 2.0 * math.pi * i / TENTACLE_COUNT
                 x_coil, y_coil = rho * math.cos(ang_c), rho * math.sin(ang_c)
@@ -352,7 +444,7 @@ def main():
                 x = x1 + (x_wrap - x1) * a_wrap
                 y = y1 + (y_wrap - y1) * a_wrap
                 z = z1 + (z_wrap - z1) * a_wrap
-                wp = pos + R @ np.array([x, y, z])
+                wp = palm + R @ np.array([x, y, z])
                 p.resetBasePositionAndOrientation(tentacle_ids[i * TENTACLE_SEGS + j],
                                                   [float(wp[0]), float(wp[1]), float(wp[2])],
                                                   [0.0, 0.0, 0.0, 1.0])
@@ -366,16 +458,18 @@ def main():
     n_frames = 0
     t_render = 0.0
     if not args.no_video:
-        writer = imageio.get_writer("results/reach_demo.mp4", fps=30,
+        writer = imageio.get_writer(mp4_name, fps=30,
                                     codec="libx264", quality=8, macro_block_size=1)
 
     def shoot(force=False):
         """渲染一帧并写盘。计时覆盖 getCameraImage（CPU 软渲染大头）+ 写盘。
-        --no-video（writer=None）时跳过常规帧，仅 force=True（终态截图）渲染一帧。"""
+        --no-video（writer=None）时跳过常规帧，仅 force=True（终态截图）渲染一帧。
+        仅 --legacy-tentacle 分支在渲染前更新触手三阶段形态（v8.2 复现口径）。"""
         nonlocal n_frames, t_render
         if writer is None and not force:
             return None
-        update_tentacles(tentacle_t)                  # 渲染前更新触手三阶段形态
+        if args.legacy_tentacle:
+            update_tentacles(tentacle_t)              # v8.2 章鱼爪分支（默认关闭）
         t0 = time.perf_counter()
         img = p.getCameraImage(w, h, viewMatrix=view, projectionMatrix=proj,
                                renderer=p.ER_TINY_RENDERER)
@@ -410,13 +504,14 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
+            pos, R = ee_pose()        # 果实搬运至保持点（局部 -FRUIT_HELD_Z，v8.3 ORCA 同口径）
+            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(pos[0]), float(pos[1]), float(pos[2])],
+                                              [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             q_prev = list(q_cmd)
             if writer is not None and k % args.every == 0:
-                tentacle_t = 1.0                     # 搬运中保持缠绕包覆夹住
+                tentacle_t = 1.0                     # v8.2 分支：搬运中保持缠绕包覆夹住
                 shoot()
         for k in range(PLACE_HOLD):                  # 入篮保持段：末端停在放果点，果实随末端下降
             p.setJointMotorControlArray(robot, range(NDOF), p.POSITION_CONTROL,
@@ -424,12 +519,14 @@ def main():
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            pos, _ = ee_pose()        # 果实跟随被测点（link7 原点），无额外偏移
+            pos, R = ee_pose()        # 果实搬运至保持点（局部 -FRUIT_HELD_Z，v8.3 ORCA 同口径）
+            fp = pos + R @ np.array([0.0, 0.0, -FRUIT_HELD_Z])
             p.resetBasePositionAndOrientation(ball_ids[name],
-                                              [float(pos[0]), float(pos[1]), float(pos[2])],
+                                              [float(fp[0]), float(fp[1]), float(fp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
             if writer is not None and k % args.every == 0:
-                tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
+                if args.legacy_tentacle:             # v8.2 分支：入篮段后段释放回卷
+                    tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
                 shoot()
         p.resetBasePositionAndOrientation(ball_ids[name], list(FRUIT_SLOTS[slot_idx]),
                                           [0.0, 0.0, 0.0, 1.0])   # 果实入篮并留存
@@ -439,6 +536,7 @@ def main():
         return q_end, drop_err, drop_in_lim
 
     rows, q_cur, place_checks = [], list(HOME), []
+    torque_records = []                               # --with-orca-mass：逐点静态持重力矩记录
     for i in range(NDOF):                             # 伺服起始 = HOME
         p.resetJointState(robot, i, HOME[i])
     t_total0 = time.perf_counter()
@@ -456,6 +554,10 @@ def main():
         err_ik = math.dist(ee_frame, target)
         err_com = math.dist(ee_com, target)
         in_lim, bad = check_limits(q)
+        tau_static = None
+        if args.with_orca_mass:                       # 带载模式：静态持重力矩实算（含 ORCA 官方质量）
+            tau_static = p.calculateInverseDynamics(robot, list(q), [0.0] * NDOF, [0.0] * NDOF)
+            torque_records.append((name, [round(t, 4) for t in tau_static]))
 
         # ---- 伺服执行：回当前姿态 → 梯形轨迹跟踪 → 收敛观察 → 超时兜底 ----
         for j in range(NDOF):
@@ -474,7 +576,8 @@ def main():
             p.stepSimulation()
             q_prev = list(q_cmd)
             if writer is not None and k % args.every == 0:
-                tentacle_t = 0.5 * min(1.0, max(0.0, (k / ANIM_STEPS - EXTEND_START) / (1.0 - EXTEND_START)))
+                if args.legacy_tentacle:             # v8.2 分支：到位段后段反向展开
+                    tentacle_t = 0.5 * min(1.0, max(0.0, (k / ANIM_STEPS - EXTEND_START) / (1.0 - EXTEND_START)))
                 shoot()
         steady, converge_step = 0, None                # 收敛观察窗（保持段 2 s，渲染）
         for k in range(HOLD_STEPS):
@@ -488,7 +591,8 @@ def main():
             if steady >= STEADY_N and converge_step is None:
                 converge_step = k
             if writer is not None and k % args.every == 0:
-                tentacle_t = 0.5 + 0.5 * min(1.0, k / (WRAP_END * HOLD_STEPS))
+                if args.legacy_tentacle:             # v8.2 分支：保持段前段缠绕包覆
+                    tentacle_t = 0.5 + 0.5 * min(1.0, k / (WRAP_END * HOLD_STEPS))
                 shoot()
         budget = SERVO_MAX_STEPS - ANIM_STEPS - HOLD_STEPS   # 超时兜底段（不渲染）
         for k in range(budget if converge_step is None else 0):
@@ -551,10 +655,42 @@ def main():
               "render_time_s", "note"]
     for row in rows:
         row["render_time_s"] = round(t_render, 3)   # 全局渲染耗时（各行同值，供结果表引用）
-    with open("results/reach_results.csv", "w", newline="") as f:
+    with open(csv_name, "w", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=fields)
         wr.writeheader()
         wr.writerows(rows)
+
+    # ---- run_stats.json（自动回填，指导书生成器据此保证「文档 = 工程」） ----
+    errs = [r["err_track_m"] * 1000 for r in rows]
+    margins = ["{:.3f} rad".format(min(min(r[f"q{j+1}"] - LIMITS[j][0],
+                                          LIMITS[j][1] - r[f"q{j+1}"]) for j in range(NDOF)))
+               for r in rows]
+    stats = {
+        "date": time.strftime("%Y-%m-%d"),
+        "platform": "达妙七轴谐波机械臂（官方 URDF 派生）+ ORCA Hand 末端执行器（v8.3）",
+        "frames": n_frames,
+        "render_time_s": round(t_render, 1),
+        "total_time_s": round(t_total, 1),
+        "wall_clock": time.strftime("%Y-%m-%d %H:%M → %H:%M"),
+        "csv_rows": len(rows), "csv_cols": len(fields),
+        "threshold_m": args.threshold,
+        "passed": f"{sum(r['reached'] for r in rows)}/{len(rows)}",
+        "err_min_mm": round(min(errs), 3), "err_max_mm": round(max(errs), 3),
+        "limit_margins": "、".join(margins),
+        "drop_residual_mm": round(min(e for _, e, _ in place_checks), 2) if place_checks else None,
+        "drop_limit_ok": f"{sum(ok for _, _, ok in place_checks)}/{len(place_checks)}" if place_checks else None,
+        "orca_mode": "with-orca-mass（带载对照）" if args.with_orca_mass
+                     else "默认（ORCA 固定子装配、惯量置零、无重力基线）",
+        "legacy_tentacle": bool(args.legacy_tentacle),
+        "pybullet": "3.2.7 (build Jan 29 2025)",
+    }
+    if args.with_orca_mass:
+        peaks = [max(abs(rec[1][j]) for rec in torque_records) for j in range(NDOF)]
+        stats["static_torque_peak_Nm_with_orca"] = {f"J{j+1}": peaks[j] for j in range(NDOF)}
+        stats["note"] = ("--with-orca-mass 为带载对照实验：重力 + ORCA 官方质量 + 静态持重力矩 PyBullet 实算；"
+                         "数字不得与无重力基线混报")
+    with open(stats_name, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=1)
 
     n_ok = sum(r["reached"] for r in rows)
     print("-" * 78)
@@ -567,16 +703,25 @@ def main():
               f"{max(e for _, e, _ in place_checks):.2f} mm，"
               f"限位 {sum(ok for _, _, ok in place_checks)}/{len(place_checks)} OK；"
               f"该段为视觉示意，不参与误差判定与 CSV")
-    print(f"演示层仿生触手：{TENTACLE_COUNT} 根 x {TENTACLE_SEGS} 段三阶段视觉示意，"
-          f"卷曲(rho=a*exp(b*theta)) -> 到位反向展开 -> 球面缠绕包覆果实，"
-          f"逐颗循环、放果后回卷；几何为示意参数（非中科大实物数据），"
-          f"无接触 / 夹持力，不参与误差判定与 CSV")
-    print("（末端执行器为仿真内已有的卷曲仿生章鱼爪纯视觉演示层；"
-          "仿真不采用达妙官方夹爪，官方 URDF 的夹爪子树已在派生 URDF 中整段裁剪）")
-    if args.no_video:
-        print("产物：results/reach_results.csv / results/scene.png（--no-video：未生成 MP4）")
+    if args.legacy_tentacle:
+        print(f"演示层仿生触手（--legacy-tentacle，v8.2 复现口径）：{TENTACLE_COUNT} 根 x {TENTACLE_SEGS} 段"
+              f"三阶段视觉示意，卷曲(rho=a*exp(b*theta)) -> 到位反向展开 -> 球面缠绕包覆果实，"
+              f"逐颗循环、放果后回卷；几何为示意参数（非中科大实物数据），"
+              f"无接触 / 夹持力，不参与误差判定与 CSV")
     else:
-        print("产物：results/reach_results.csv / results/reach_demo.mp4 / results/scene.png")
+        print("末端执行器：ORCA Hand 官方 URDF 几何（srl-ethz/orcahand_description，MIT），"
+              "fixed 挂接于 link7 的固定子装配，预设握合姿态；"
+              "腱绳耦合未在官方 URDF 中建模，本仿真不含腱绳驱动、接触力学与夹持力；"
+              "惯量置零以维持 v8.2 无重力基线，不代表带载精度")
+    if args.with_orca_mass and torque_records:
+        peaks = [max(abs(rec[1][j]) for rec in torque_records) for j in range(NDOF)]
+        print("带载静态持重力矩（PyBullet 实算，含 ORCA 官方质量，逐点峰值）："
+              + ", ".join(f"J{j+1}={peaks[j]:.3f}" for j in range(NDOF)) + " N·m；"
+              "该组数字属带载对照口径，不与无重力基线混报")
+    if args.no_video:
+        print(f"产物：{csv_name} / results/scene.png（--no-video：未生成 MP4）")
+    else:
+        print(f"产物：{csv_name} / {mp4_name} / results/scene.png")
     print("（未达标点已如实标注 note，处理流程见指导书 §9.2，禁止放宽阈值或改限位）")
     p.disconnect()
     raise SystemExit(0 if n_ok == len(rows) else 1)
