@@ -1,0 +1,465 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ====================================================================
+     达妙科技开源七轴谐波机械臂 —— 仿真专用派生 URDF
+     来源：damiao_7axis_arm/left_arm_dm/src/left_description_grip/urdf/
+           left_description_grip.urdf（SolidWorks URDF Exporter 1.6，BSD-3-Clause）
+     派生方式：derive_damiao_urdf.py 自动生成
+       1) 删除官方夹爪子树 link{tool_link,gripper_left,gripper_right}
+          与 joint{tool_joint,gripper_joint1,gripper_joint2}；
+       2) 保留 link{base_link,link1..link7} 与 joint1..joint7 的
+          几何、惯量、限位、effort/velocity、origin/axis 原值，逐字未改；
+       3) 仅改写 mesh 引用路径 package:// -> 相对路径（STL 文件本身未改）。
+     说明：未新建任何几何，未修改任何尺寸、惯量与限位数值。
+     ==================================================================== -->
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="damiao_7axis_reach">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="0.000046 -0.000036 0.039909"
+        rpy="0 0 0" />
+      <mass
+        value="0.94" />
+      <inertia
+        ixx="0.000697639723"
+        ixy="-0.000000132241"
+        ixz="0.000000342749"
+        iyy="0.000695794391"
+        iyz="-0.000001050443"
+        izz="0.000739633799" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/base_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link
+    name="link1">
+    <inertial>
+      <origin
+        xyz="-0.000050 -0.006315 0.040353"
+        rpy="0 0 0" />
+      <mass
+        value="0.87" />
+      <inertia
+        ixx="0.000638092641"
+        ixy="0.000000341750"
+        ixz="-0.000000227216"
+        iyy="0.000616920710"
+        iyz="-0.000010957188"
+        izz="0.000611463024" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link1.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link1.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint1"
+    type="revolute">
+    <origin
+      xyz="0 0 0.0756"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="link1" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.827"
+      upper="2.827"
+      effort="50"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link2">
+    <inertial>
+      <origin
+        xyz="-0.000802406406093151 0.0485455425258477 0.0290757219472021"
+        rpy="0 0 0" />
+      <mass
+        value="0.278196157886463" />
+      <inertia
+        ixx="0.000602248112"
+        ixy="0.000003279827"
+        ixz="0.000008562369"
+        iyy="0.000425624959"
+        iyz="-0.000038162599"
+        izz="0.000460432049" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link2.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link2.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint2"
+    type="revolute">
+    <origin
+      xyz="0 -0.042 0.0425"
+      rpy="0 0 0" />
+    <parent
+      link="link1" />
+    <child
+      link="link2" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-1.8064157758141308"
+      upper="0.6806784082777885"
+      effort="50"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link3">
+    <inertial>
+      <origin
+        xyz="-0.000830 0.000268 0.043206"
+        rpy="0 0 0" />
+      <mass
+        value="1.005" />
+      <inertia
+        ixx="0.001208246092"
+        ixy="-0.000001250193"
+        ixz="-0.000054787211"
+        iyy="0.001315016563"
+        iyz="0.000017960681"
+        izz="0.000863117497" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link3.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link3.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint3"
+    type="revolute">
+    <origin
+      xyz="0 0.042 0.0744"
+      rpy="0 0 0" />
+    <parent
+      link="link2" />
+    <child
+      link="link3" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.8797932657906435"
+      upper="2.8797932657906435"
+      effort="50"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link4">
+    <inertial>
+      <origin
+        xyz="0.037596 0.000142 0.023704"
+        rpy="0 0 0" />
+      <mass
+        value="1.244" />
+      <inertia
+        ixx="0.002093784301"
+        ixy="0.000001375953"
+        ixz="0.000128907459"
+        iyy="0.002130079448"
+        iyz="0.000003496039"
+        izz="0.000759144258" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link4.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link4.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint4"
+    type="revolute">
+    <origin
+      xyz="-0.042 0 0.1156"
+      rpy="0 0 0" />
+    <parent
+      link="link3" />
+    <child
+      link="link4" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-1.8151424220741028"
+      upper="0.7592182246175333"
+      effort="50"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link5">
+    <inertial>
+      <origin
+        xyz="0.00101305913898159 5.59932664077889E-06 0.0147800484760884"
+        rpy="0 0 0" />
+      <mass
+        value="0.0755997456066607" />
+      <inertia
+        ixx="0.000043714135"
+        ixy="0.000000003991"
+        ixz="0.000000618439"
+        iyy="0.000086089698"
+        iyz="-0.000000036897"
+        izz="0.000084515008" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link5.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link5.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint5"
+    type="revolute">
+    <origin
+      xyz="0.042 0 0.0995"
+      rpy="0 0 0" />
+    <parent
+      link="link4" />
+    <child
+      link="link5" />
+    <axis
+      xyz="0 0 1" />
+    <limit
+      lower="-2.7576202181510405"
+      upper="2.7576202181510405"
+      effort="12"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link6">
+    <inertial>
+      <origin
+        xyz="0.031216 -0.002036 0.027747"
+        rpy="0 0 0" />
+      <mass
+        value="0.926" />
+      <inertia
+        ixx="0.001117267327"
+        ixy="-0.000003516964"
+        ixz="0.000052346964"
+        iyy="0.001117238380"
+        iyz="-0.000052357597"
+        izz="0.000502636315" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link6.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.752941176470588 0.752941176470588 0.752941176470588 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint6"
+    type="revolute">
+    <origin
+      xyz="-0.03325 0 0.035"
+      rpy="0 0 0" />
+    <parent
+      link="link5" />
+    <child
+      link="link6" />
+    <axis
+      xyz="-1 0 0" />
+    <limit
+      lower="-1.3264502315156903"
+      upper="1.3264502315156903"
+      effort="12"
+      velocity="10.0" />
+  </joint>
+  <link
+    name="link7">
+    <inertial>
+      <origin
+        xyz="-0.044074 0.033743 0.045361"
+        rpy="0 0 0" />
+      <mass
+        value="0.1765" />
+      <inertia
+        ixx="0.000246033566"
+        ixy="0.000001349343"
+        ixz="-0.000175385177"
+        iyy="0.000474021800"
+        iyz="-0.000001550226"
+        izz="0.000465841808" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/link7.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.866666666666667 0.909803921568627 1 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/link7.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="joint7"
+    type="revolute">
+    <origin
+      xyz="0.03325 -0.03325 0.0555"
+      rpy="0 0 0" />
+    <parent
+      link="link6" />
+    <child
+      link="link7" />
+    <axis
+      xyz="0 -1 0" />
+    <limit
+      lower="-1.335176877775662"
+      upper="1.335176877775662"
+      effort="12"
+      velocity="10.0" />
+  </joint>
+</robot>
