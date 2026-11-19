@@ -238,43 +238,19 @@ def fk_pos(robot, ee_idx):
 
 
 def solve_ik(robot, ee_idx, target, seed=None, face=None):
-    """两段式位置-only IK（TCP 口径 + 可选朝向 face）。
+    """两段式位置-only IK（TCP 口径；face 给定时为 6D 朝向约束版）。
 
-    第一段：PyBullet 内置求解器出粗解——显式限位 / jointRanges / HOME 作 nullspace 参考；
-            初值取上一点收敛后的实际关节角（解连续性处理，避免 7 轴冗余的零空间漂移）；
-            face 给定时改用 6D IK（targetOrientation = 爪轴对准 face 方向），
-            腕部目标 = 目标 − R_face·[0,0,TOOL_OFFSET_Z]（腕部停在果实体外）。
-    第二段：refine_ik() 以 TCP 为测量点做位置-only 数值精修，把残差压到亚毫米。
-
-    注：末端参考点取 link7 原点（即 joint7 轴心），joint7 旋转不改变该点位置，
-    因此位置-only IK 无法确定 j7，它保持初值（= 0）；不影响位置误差判定。
+    TCP = link7 原点 + R·[0,0,TOOL_OFFSET_Z]，腕部停在果实体外 L=0.11 m。
+    face=None（演示层默认）：TCP 定点迭代（腕部目标 = 目标 − R·[0,0,L]，≤4 轮）+ 数值精修；
+    face 给定：内置 6D IK（targetOrientation）+ 数值精修，失配时退回确定性帧重解。
     """
     seed = list(seed) if seed is not None else list(HOME)
     set_joints(robot, seed)
-    tgt = np.asarray(target, dtype=float)
-    kw = {}
-    if face is not None:
-        R_f = frame_from_z(face)              # 确定性朝向帧（滚转自由度改为靠过渡时长平滑，见 CSS 注释）
-        kw["targetOrientation"] = mat_quat(R_f)
-        tgt = tgt - R_f @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
-    q = list(p.calculateInverseKinematics(
-        robot, ee_idx, [float(v) for v in tgt],
-        **kw,
-        lowerLimits=[lo for lo, _ in LIMITS],
-        upperLimits=[hi for _, hi in LIMITS],
-        jointRanges=[hi - lo for lo, hi in LIMITS],
-        restPoses=list(seed),          # nullspace 参考取「当前种子姿态」而非 HOME：避免 7 轴冗余下腕部甩到远处姿态（扭动）
-        maxNumIterations=IK_MAX_ITER,
-        residualThreshold=IK_TOL,
-    )[:NDOF])
-    q, err = refine_ik(robot, ee_idx, target, q, iters=100)
-    if err > 1e-4 and face is not None:
-        # 回退：滚转自由的帧在该点可能无解 → 改用确定性帧重解一次，取残差更小者
-        R_alt = frame_from_z(face)
-        q_alt = list(p.calculateInverseKinematics(
-            robot, ee_idx, [float(v) for v in np.asarray(target, dtype=float)
-                            - R_alt @ np.array([0.0, 0.0, TOOL_OFFSET_Z])],
-            targetOrientation=mat_quat(R_alt),
+
+    def coarse(t, quat_t=None):
+        kw = {"targetOrientation": quat_t} if quat_t is not None else {}
+        return list(p.calculateInverseKinematics(
+            robot, ee_idx, [float(v) for v in t], **kw,
             lowerLimits=[lo for lo, _ in LIMITS],
             upperLimits=[hi for _, hi in LIMITS],
             jointRanges=[hi - lo for lo, hi in LIMITS],
@@ -282,9 +258,28 @@ def solve_ik(robot, ee_idx, target, seed=None, face=None):
             maxNumIterations=IK_MAX_ITER,
             residualThreshold=IK_TOL,
         )[:NDOF])
+
+    tgt = np.asarray(target, dtype=float)
+    if face is not None:
+        R_f = frame_from_z(face)
+        q = coarse(tgt - R_f @ np.array([0.0, 0.0, TOOL_OFFSET_Z]), mat_quat(R_f))
+    else:
+        q = coarse(tgt)
+        for _ in range(4):                       # TCP 定点迭代（位置-only 也把腕部撤回 L）
+            set_joints(robot, q)
+            if np.linalg.norm(np.asarray(target, dtype=float) - fk_pos(robot, ee_idx)) < 1e-5:
+                break
+            R = quat_R(p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[5])
+            tgt = np.asarray(target, dtype=float) - R @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
+            q = coarse(tgt)
+    q, err = refine_ik(robot, ee_idx, target, q, iters=100)
+    if err > 1e-4 and face is not None:          # 6D 回退：确定性帧重解
+        R_alt = frame_from_z(face)
+        q_alt = coarse(np.asarray(target, dtype=float) - R_alt @ np.array([0.0, 0.0, TOOL_OFFSET_Z]),
+                       mat_quat(R_alt))
         q_alt, err_alt = refine_ik(robot, ee_idx, target, q_alt, iters=100)
         if err_alt < err:
-            q, err = q_alt, err_alt
+            q = q_alt
     return q
 
 
@@ -485,7 +480,7 @@ def main():
 
     # ---- 演示层相位引擎：观察→确定位置→夹取→合拢→抓住→移动→松开→掉落→回预设 ----
     FACE_DIR = (0.42, 0.20, -0.885)                # 末端朝向（确定性）：爪轴指向前下方
-    PRESET_TCP = (0.20, -0.05, 0.42)               # 预设/待机位（TCP 坐标）
+    PRESET_TCP = (0.10, -0.04, 0.54)               # 预设/待机位（TCP 坐标）：高于果实簇、靠内，远离果实
     OBS_BACK = 0.09                                # 观察位：TCP 沿爪轴后撤距离（m）
     DROP_ABOVE = 0.12                              # 松开点：篮内槽位正上方高度（m）
     G_ANIM = 9.81                                  # 掉落动画重力加速度（m/s²）
@@ -542,8 +537,7 @@ def main():
     rows, place_checks = [], []
     # 起始姿态 = 预设待机位（面向工作台的「预备」姿态）：避免从全零 HOME 到观察位
     # 的一次性大幅腕部翻转（用户 2026-11-18 指出「观察时老扭」）
-    q_cur = solve_ik(robot, ee_idx, PRESET_TCP, seed=list(HOME),
-                     face=np.asarray(FACE_DIR, dtype=float) / np.linalg.norm(FACE_DIR))
+    q_cur = solve_ik(robot, ee_idx, PRESET_TCP, seed=list(HOME))   # 位置-only，不约束腕部朝向
     for i in range(NDOF):
         p.resetJointState(robot, i, q_cur[i])
     t_total0 = time.perf_counter()
@@ -556,31 +550,19 @@ def main():
         # ---- 采摘流程：观察→确定位置→夹取→合拢→抓住→移动→松开→掉落→回预设 ----
         slot = FRUIT_SLOTS[len(place_checks)]
         p_drop = (slot[0], slot[1], slot[2] + DROP_ABOVE)
-        d = np.asarray(FACE_DIR, dtype=float)
-        d = d / np.linalg.norm(d)
-        # 视线方向：从初始位指向果实（观察 = 原地转向这个方向，不贴近）
-        d_aim = np.asarray(target, dtype=float) - np.asarray(PRESET_TCP, dtype=float)
-        d_aim = d_aim / np.linalg.norm(d_aim)
-
-        # ① 观察：**在初始位置原地转向果实**（TCP 不动，只转爪轴对准视线方向）
+        # ① 回预设位并停顿（模仿观察：**静止不动**，不转向、不摆头、不扭）
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_aim = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur, face=d_aim)
+        q_preset_hold = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur)   # 位置-only，腕部无朝向约束
         p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])
-        servo_to(q_from, q_aim, 0.9, 0.0, 0.0)
-        # ② 观察确认：原地小幅摆头（±4.5° 左/右/中），球体脉冲同步
-        side = np.cross(d_aim, np.array([0.0, 0.0, 1.0]))
-        side = side / np.linalg.norm(side)
-        for tag, tilt, dur in (("L", 0.08, 0.28), ("R", -0.08, 0.42), ("C", 0.0, 0.28)):
-            q_scan_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-            aim = d_aim + side * tilt
-            q_scan = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_aim, face=aim / np.linalg.norm(aim))
-            p.changeVisualShape(ball_ids[name], -1,
-                                rgbaColor=[0.85, 0.10, 0.10, 1.0] if tag != "C" else [0.95, 0.80, 0.10, 1.0])
-            servo_to(q_scan_from, q_scan, dur, 0.0, 0.0)
+        servo_to(q_from, q_preset_hold, 1.0, 0.0, 0.0)
+        for k in range(int(round(0.7 * SIM_HZ))):      # 原地停顿 0.7 s
+            p.stepSimulation()
+            if writer is not None and k % args.every == 0:
+                shoot()
 
         # ③ 夹取：TCP 从观察位沿爪轴推进到果实
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q = solve_ik(robot, ee_idx, target, seed=q_aim, face=d_aim)
+        q = solve_ik(robot, ee_idx, target, seed=q_preset_hold)
         for j in range(NDOF):                          # 静态判定：关节置于 IK 解测纯残差
             p.resetJointState(robot, j, q[j])
         # 静态判定（TCP 口径）
@@ -654,7 +636,7 @@ def main():
 
         # ⑥ 移动：果实跟随 TCP 运往篮子松开点（槽位正上方）
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_drop = solve_ik(robot, ee_idx, p_drop, seed=q_cur, face=d)
+        q_drop = solve_ik(robot, ee_idx, p_drop, seed=q_cur)
         servo_to(q_from, q_drop, 2.0, 1.0, 1.0, carry_ball=ball_ids[name])
         # ⑦ 松开：果实固定在松开点，爪张开（1.0→0 回预设形态）
         release_err = math.dist(fk_pos(robot, ee_idx), p_drop)
@@ -664,7 +646,7 @@ def main():
         p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.10, 0.70, 0.15, 1.0])  # 已采摘→绿色
         # ⑨ 回预设姿势：爪已回卷，末端返回预设位（面向下一个果实的待机朝向）
         q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_preset = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur, face=d)
+        q_preset = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur)
         servo_to(q_from, q_preset, 1.4, 0.0, 0.0)
         place_checks.append((name, release_err * 1000, True))
         q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]
