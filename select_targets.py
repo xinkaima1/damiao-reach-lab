@@ -137,14 +137,26 @@ def main():
         for c in cands:
             if any(math.dist(c[:3], o) < MIN_SEPARATION for o in chosen_pts):
                 continue
-            # 种子取候选点自身的关节解（该解 FK 精确产生该 TCP，外环即时收敛，
-            # 且天然落在正确朝向分支上；链式种子在外环口径下会漂移朝向分支导致不收敛）
-            q, res = refine_tcp(robot, idx, c[:3], c[3])
-            if res > TCP_RES_MAX or not in_limits(q):
+            # 候选解 1：姿态约束解（与主脚本同一套 solve_tcp_pose/tcp_refine）
+            q_ref, res_ref = refine_tcp(robot, idx, c[:3], c[3])
+            # 候选解 2：候选点自身的关节解（FK 精确产生该 TCP；姿态分支未必满足约束，
+            # 但作为可达解合法，仅在残差/限位/余量合格时参与择优）
+            D.set_joints(robot, list(c[3]))
+            tcp_c, _ = fk_tcp(robot, idx)
+            res_c = math.dist(tcp_c, c[:3])
+            sols = [(q_ref, res_ref), (list(c[3]), res_c)]
+            picked_sol = None
+            for q_s, res_s in sols:
+                if res_s > TCP_RES_MAX or not in_limits(q_s):
+                    continue
+                m_s = limit_margin(q_s)
+                if m_s < MIN_LIMIT_MARGIN:
+                    continue
+                if picked_sol is None or m_s > picked_sol[2]:
+                    picked_sol = (q_s, res_s, m_s)
+            if picked_sol is None:
                 continue
-            m = limit_margin(q)
-            if m < MIN_LIMIT_MARGIN:
-                continue
+            q, res, m = picked_sol
             score = math.dist(c[:3], anc)
             if best is None or score < best[0]:
                 best = (score, c[:3], res, q, m)

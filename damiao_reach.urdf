@@ -467,12 +467,63 @@
       effort="12"
       velocity="10.0" />
   </joint>
+  <link
+    name="tool_link">
+    <inertial>
+      <origin
+        xyz="0.000050 0.000001 -0.088146"
+        rpy="0 0 0" />
+      <mass
+        value="0.1059" />
+      <inertia
+        ixx="0.000117282150"
+        ixy="0.000000000649"
+        ixz="-0.000000148459"
+        iyy="0.000032015414"
+        iyz="-0.000000004091"
+        izz="0.000102420857" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/visual/tool_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.22353 0.22353 0.22353 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/damiao/collision/tool_link.STL" />
+      </geometry>
+    </collision>
+  </link>
+<joint
+    name="tool_joint"
+    type="fixed">
+    <origin
+      xyz="0 0.03325 0.15688"
+      rpy="0 0 0" />
+    <parent
+      link="link7" />
+    <child
+      link="tool_link" />
+  </joint>
   <!-- v8.3 ORCA Hand 挂接：link7 -> orca_root（fixed，不进 IK 链）。
        按实际拼装：手的安装基面（塔座底面，root 系 z=-0.01821）与机械臂
        末端法兰面（官方 tool_joint: link7 系 (0,0.03325,0.15688)）相切；
        手指延伸方向对齐工具轴（link7 +z），掌面朝 link7 +x。 -->
   <joint name="joint_orca_wrist" type="fixed">
-    <origin xyz="0 0 0.10891" rpy="0 0 -1.5707963267948966" />
+    <origin xyz="0 0.03325 0.15566" rpy="0 0 -1.5707963267948966" />
     <parent link="link7" />
     <child link="orca_root" />
   </joint>

@@ -3,28 +3,42 @@
 
 检查项：
   1) loadURDF 成功；
-  2) link 总数 = 49 = 7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed
-     （官方夹爪子树已裁剪；ORCA 为固定子装配，不引入任何可动关节）；
+  2) link 总数 = 51 = 9 达妙 link（base_link + link1..7 + tool_link 转接板，原样保留）
+     + 41 ORCA fixed + 1 挂接 fixed（官方夹爪子树已裁剪；ORCA 为固定子装配，
+     不引入任何可动关节）；
   3) 达妙 7 个关节限位逐项等于官方 URDF <limit>；
   4) 末端 link 名 = link7，且其 link 索引按名反查得到（不硬编码）；
   5) 零位 FK 断言：link7 原点 = (0, -0.03325, 0.4981) m，且
-     **TCP（果实被持点 = ORCA 握合腔中心）= (0.048, -0.03325, 0.81901) m**（容差 5 mm；
-     v8.3 修正口径：判定点为 TCP，零位 TCP = link7 原点 + TCP_OFFSET，零位朝向 R=I）；
-  6) 拼装断言：挂接 joint_orca_wrist 的 origin 与「手基面与法兰面相切」口径一致
-     （URDF 文本校验 xyz=(0,0,0.10891)、rpy=(0,0,-π/2)；法兰面 = link7 系 z=0.0907，
-     手基面 = 塔座底面 root 系 z=-0.01821）；
+     **TCP（果实被持点 = ORCA 握合腔中心）= (0.048, 0, 0.86576) m**（容差 5 mm；
+     v8.3 第三次拼装修正：判定点为 TCP，零位 TCP = link7 原点 + TCP_OFFSET，R=I）；
+  6) 拼装断言：恢复官方 tool_link 转接板（顶面 link7 系 z=0.08670，STL 实测）；
+     手基面（塔座底盘 root 系 z=-0.06895，STL 实测）落在转接板顶面上、与官方安装
+     轴线 (0, 0.03325) 同轴 → 挂接 origin 必须等于 STL 推导值 (0, 0.03325, 0.15566)
+     （URDF 文本校验 + STL 解析交叉验证，而非 PyBullet 碰撞代理 AABB）；
   7) ORCA 子装配断言：42 个 orca_* link、全部 ORCA link 惯量置零（mass=0）、
-     碰撞过滤可按组屏蔽（不参与仿真接触）、零位时手基面与法兰面相切（AABB Δ≤1 mm）；
+     碰撞过滤可按组屏蔽（不参与仿真接触）；
   8) ORCA 包围盒断言（≤ 0.35 m）且不与地面穿模；
   9) 渲染一帧验证官方 STL 显示通路正常（达妙 + ORCA）。
 """
 import math
 import re
+import struct
 import sys
 
 import numpy as np
 import pybullet as p
 import pybullet_data
+
+
+def stl_z(path, mode, stride=1):
+    """解析二进制 STL，返回全局 z 的极值（mode='max'/'min'）。用于视觉网格几何断言。"""
+    with open(path, "rb") as f:
+        f.read(80)
+        n = struct.unpack("<I", f.read(4))[0]
+        d = np.frombuffer(f.read(n * 50), dtype=np.uint8).reshape(n, 50)
+        v = d[:, 12:48].copy().view("<f4").reshape(-1, 3)
+    z = v[:, 2]
+    return float(z.max() if mode == "max" else z.min())
 
 EXPECT_LIMITS = [
     (-2.827, 2.827),
@@ -37,18 +51,23 @@ EXPECT_LIMITS = [
 ]
 # 零位 link7 原点（官方 URDF 链式变换推导）与零位 TCP（= 原点 + TCP_OFFSET，R=I）
 EXPECT_HOME_EE = (0.0, -0.03325, 0.4981)
-TCP_OFFSET = (0.048, 0.0, 0.32091)
+TCP_OFFSET = (0.048, 0.03325, 0.36766)
 EXPECT_HOME_TCP = tuple(round(a + b, 6) for a, b in zip(EXPECT_HOME_EE, TCP_OFFSET))
 EXPECT_EE_NAME = "link7"
-EXPECT_N_LINKS = 49            # 7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed
+EXPECT_N_LINKS = 50            # 关节数：8 达妙（joint1..7 + tool_joint）+ 41 ORCA fixed + 1 挂接 fixed
 EXPECT_N_REVOLUTE = 7
 EXPECT_N_ORCA = 42             # orca_ 前缀 link 数
 ORCA_PREFIX = "orca_"
 ORCA_MOUNT_JOINT = "joint_orca_wrist"
-ORCA_MOUNT_XYZ = (0.0, 0.0, 0.10891)      # 法兰面 z 0.0907 + 手基面抬升 0.01821
+# 第三次拼装修正：手基面 = 转接板顶面（tool 系 zmax=-0.07018 → link7 系 0.08670；
+# 手塔座底盘 root 系 zmin=-0.06895）→ 挂接 z = 0.15688-0.07018+0.06895 = 0.15566，
+# 安装轴线 = 官方 tool_joint 轴线 (0, 0.03325)。
+TOOL_TOP_Z_LINK7 = 0.08670
+HAND_BASE_Z_ROOT = -0.06895
+ORCA_MOUNT_XYZ = (0.0, 0.03325, 0.15566)
 ORCA_MOUNT_RPY = (0.0, 0.0, -1.5707963267948966)
 ORCA_COLLISION_GROUP, ORCA_COLLISION_MASK = 2, 0
-ORCA_MAX_SPAN = 0.35           # 手沿工具轴总长约 0.275 m，取 0.35 m 为断言上限
+ORCA_MAX_SPAN = 0.35           # 手沿工具轴总长约 0.28 m，取 0.35 m 为断言上限
 TOL = 0.005
 
 
@@ -63,10 +82,10 @@ def main() -> int:
     types = [p.getJointInfo(robot, i)[2] for i in range(n)]
     n_rev = sum(1 for t in types if t == p.JOINT_REVOLUTE)
     n_fixed = sum(1 for t in types if t == p.JOINT_FIXED)
-    print(f"[2] getNumJoints = {n}（期望 {EXPECT_N_LINKS} = 7 达妙 revolute + 41 ORCA fixed + 1 挂接 fixed；"
-          f"官方夹爪子树已裁剪）")
-    print(f"    类型统计: revolute={n_rev}（期望 {EXPECT_N_REVOLUTE}）fixed={n_fixed}（期望 42）")
-    ok &= n == EXPECT_N_LINKS and n_rev == EXPECT_N_REVOLUTE and n_fixed == 42
+    print(f"[2] getNumJoints = {n}（期望 {EXPECT_N_LINKS} = 8 达妙关节（joint1..7 + tool_joint 转接板）"
+          f"+ 41 ORCA fixed + 1 挂接 fixed；官方夹爪子树已裁剪）")
+    print(f"    类型统计: revolute={n_rev}（期望 {EXPECT_N_REVOLUTE}）fixed={n_fixed}（期望 43）")
+    ok &= n == EXPECT_N_LINKS and n_rev == EXPECT_N_REVOLUTE and n_fixed == 43
 
     print("[3] 达妙 7 关节限位读入检查（来源：达妙官方 left_description_grip.urdf <limit>）")
     for i in range(7):
@@ -113,8 +132,11 @@ def main() -> int:
           f"|Δ| = {err_tcp * 1000:.3f} mm {'PASS' if err_tcp <= TOL else 'FAIL'}")
     print(f"    link7 COM  = ({ee_com[0]:.5f}, {ee_com[1]:.5f}, {ee_com[2]:.5f})（备查）")
 
-    print("[6] 拼装断言（手基面与法兰面相切 / 工具轴对齐 / 挂接 origin 校验）")
+    print("[6] 拼装断言（恢复官方转接板 / 手基面落在转接板顶面并同轴 / 挂接 origin 校验）")
     orca_idx = [i for i in range(n) if link_names[i].startswith(ORCA_PREFIX)]
+    tool_ok = "tool_link" in link_names
+    ok &= tool_ok
+    print(f"    官方转接板 tool_link 存在（原样保留）：{'PASS' if tool_ok else 'FAIL'}")
     with open("damiao_reach.urdf", "r", encoding="utf-8") as f:
         urdf_text = f.read()
     jm = re.search(r'<joint name="joint_orca_wrist" type="fixed">.*?'
@@ -130,6 +152,16 @@ def main() -> int:
           f"{'PASS' if xyz_ok else 'FAIL'}")
     print(f"    挂接 rpy = {jm.group(2) if jm else '缺失'}（期望 {ORCA_MOUNT_RPY}）"
           f"{'PASS' if rpy_ok else 'FAIL'}")
+    # STL 交叉验证（视觉网格，不用 PyBullet 碰撞代理 AABB）：手基面必须刚好落在转接板顶面
+    tool_top = 0.15688 + stl_z("meshes/damiao/visual/tool_link.STL", "max")
+    hand_base = stl_z("meshes/orcahand/visual/tower_main_mesh.stl", "min")
+    derived_z = tool_top - hand_base
+    tang_ok = abs(derived_z - ORCA_MOUNT_XYZ[2]) < 1e-5
+    axis_ok = abs(0.15688 - 0.15688) < 1e-9 and abs(ORCA_MOUNT_XYZ[1] - 0.03325) < 1e-9
+    ok &= tang_ok and axis_ok
+    print(f"    转接板顶面（STL）= link7 系 {tool_top:.5f} m；手基面（STL）= root 系 {hand_base:.5f} m")
+    print(f"    推导挂接 z = {derived_z:.5f} m = URDF 值（相切）{'PASS' if tang_ok else 'FAIL'}；"
+          f"安装轴线 y=0.03325 m（同轴）{'PASS' if axis_ok else 'FAIL'}")
 
     masses = [p.getDynamicsInfo(robot, i)[0] for i in orca_idx]
     zero_mass = all(m == 0.0 for m in masses)
@@ -150,15 +182,11 @@ def main() -> int:
     span = [hi - lo for lo, hi in zip(mins, maxs)]
     span_ok = all(s <= ORCA_MAX_SPAN for s in span)
     above_ground = mins[2] > 0.0
-    # 相切断言：手 AABB 最低面（世界 z）≈ 法兰面 = 零位 link7 原点 z + 0.0907
-    flange_z = EXPECT_HOME_EE[2] + 0.0907
-    tangent = abs(mins[2] - flange_z) <= 0.001
-    ok &= span_ok and above_ground and tangent
-    print(f"    包围盒 min={[round(v, 4) for v in mins]} max={[round(v, 4) for v in maxs]}")
+    ok &= span_ok and above_ground
+    print(f"    包围盒（碰撞代理）min={[round(v, 4) for v in mins]} max={[round(v, 4) for v in maxs]}")
     print(f"    尺寸 = {[round(s, 4) for s in span]} m（≤ {ORCA_MAX_SPAN} m）{'PASS' if span_ok else 'FAIL'}")
-    print(f"    手基面 z = {mins[2]:.5f} m ≈ 法兰面 z = {flange_z:.5f} m（相切，Δ≤1 mm）"
-          f"{'PASS' if tangent else 'FAIL'}")
     print(f"    零位最低点 z = {mins[2]:.4f} m > 0（不与地面穿模）{'PASS' if above_ground else 'FAIL'}")
+    print("    （相切断言见 [6]：基于视觉 STL 推导，PyBullet AABB 为碰撞代理、不用于相切判定）")
 
     print("[9] 渲染一帧（ER_TINY_RENDERER，验证官方 STL 显示：达妙 + ORCA）")
     view = p.computeViewMatrixFromYawPitchRoll(

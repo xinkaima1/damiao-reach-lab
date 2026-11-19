@@ -19,7 +19,7 @@ v8.3 新增（ORCA 末端执行器，口径见 PROMPT_ORCA末端执行器_v8.3_R
   5. 在 link7 之后以 fixed joint 挂接 ORCA Hand 仿真专用子装配
      （来源 third_party/orcahand/orcahand_right_sim.urdf，由 derive_orcahand_urdf.py
      从官方 MIT 描述文件派生：惯量置零、17 个 revolute 锁定为预设握合姿态）；
-     精度判定点 = TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0, 0.32091)），
+     精度判定点 = TCP（果实被持点 = 握合腔中心，link7 系 (0.048, 0.03325, 0.36766)），
      目标点 = 果实位置（select_targets.py 按 TCP 口径重算，见 v8.3 修正）；
   6. 达妙臂主体 8 link / 7 revolute / 15 个官方保留块逐字一致的要求不变，
      新增对 ORCA 子装配（42 link / 41 fixed + 1 个挂接 fixed joint）的强校验。
@@ -29,20 +29,22 @@ import os
 import re
 import sys
 
-DROP_LINKS = {"tool_link", "gripper_left", "gripper_right"}
-DROP_JOINTS = {"tool_joint", "gripper_joint1", "gripper_joint2"}
+DROP_LINKS = {"gripper_left", "gripper_right"}
+DROP_JOINTS = {"gripper_joint1", "gripper_joint2"}
 
 # ---- ORCA 子装配挂接参数（link7 -> orca_root，fixed） ----
-# 依据（2026-11-18 第二次修正，按实际拼装重算）：
-#   * 法兰面：link7 腕筒顶面 = 末端执行器法兰（零位世界 z=0.5888，即 link7 系
-#     z=0.0907；官方 tool_link 转接板顶面 0.5878 与之齐平，官方夹爪即装于此面）；
-#   * 手的安装基面：官方展开 URDF 实测塔座结构最低面 z_r = -0.01821 m
-#     （PyBullet AABB），挂接时抬升该值使基面与法兰面相切（无间隙、无穿模）；
-#   * 朝向：手指延伸方向（root +z）对齐工具轴（link7 +z），即手沿法兰轴向外伸出；
-#     掌面（root +y）朝 link7 +x，握合腔位于工具轴 +x 侧（果实被持点由
-#     derive 后的 TCP 常量给出，见 damiao_reach_demo.py / select_targets.py）。
+# 依据（2026-11-18 第三次修正，按官方转接板 + 视觉网格实测；此前两次的相切口径
+# 基于 PyBullet 碰撞代理 AABB，与视觉网格不符，已作废）：
+#   * 官方 tool_link（法兰转接板，原样保留、不修改）顶面：tool 系 z=-0.07017
+#     → link7 系 z = 0.15688-0.07017 = 0.08671 m（STL 实测）；
+#   * 手的安装基面（塔座底盘，视觉 STL）：root 系 z_r = -0.06895 m；
+#   * 安装轴线 = 官方 tool_joint 轴线：link7 系 (0, 0.03325)（非 link7 原点）；
+#   * 故挂接 origin xyz = (0, 0.03325, 0.08671+0.06895=0.15566)，rpy = Rz(-90°)：
+#     基面落在转接板顶面上（相切、同轴），手指延伸方向（root +z）对齐工具轴
+#     （link7 +z），掌面（root +y）朝 link7 +x；握合腔中心即 TCP
+#     （见 damiao_reach_demo.py 的 TCP_OFFSET）。
 ORCA_SIM_URDF = "third_party/orcahand/orcahand_right_sim.urdf"
-ORCA_MOUNT_XYZ = "0 0 0.10891"                # = 法兰面 z 0.0907 + 手基面抬升 0.01821
+ORCA_MOUNT_XYZ = "0 0.03325 0.15566"          # 转接板顶面 0.08671 + 手基面 0.06895
 ORCA_MOUNT_RPY = "0 0 -1.5707963267948966"    # Rz(-90°)：root z->link7 z（工具轴），root y->link7 x
 EXPECT_ORCA_LINKS, EXPECT_ORCA_JOINTS = 42, 41
 EXPECT_ORCA_MESHES = 68
@@ -201,8 +203,8 @@ def main() -> int:
     orca_unchanged = [n for n in orca_src
                       if n in orca_blocks and orca_src[n] == orca_blocks[n]]
 
-    print(f"[派生] link 保留 {n_links}（期望 8+42=50），joint {n_joints}（期望 7+41+1=49）")
-    print(f"[派生] 类型 revolute={n_revolute} prismatic={n_prismatic} fixed={n_fixed}（期望 7/0/42）")
+    print(f"[派生] link 保留 {n_links}（期望 9+42=51），joint {n_joints}（期望 8+41+1=50）")
+    print(f"[派生] 类型 revolute={n_revolute} prismatic={n_prismatic} fixed={n_fixed}（期望 7/0/43）")
     print(f"[派生] mesh 路径改写 {len(rewritten)} 处，全部 -> meshes/damiao/...")
     print(f"[派生] 残留夹爪引用: {leftover or '无'}；残留 package:// 网格引用: {pkg} 处")
     print(f"[派生] 达妙保留块与官方逐字一致: {len(unchanged)} 个；不一致: {mismatch or '无'}")
@@ -210,11 +212,11 @@ def main() -> int:
           f"挂接 joint={n_orca_mount}（期望 1），mesh 缺失: {orca_mesh_missing or '无'}，"
           f"块与官方派生一致: {len(orca_unchanged)}/{len(orca_src)}；不一致: {orca_mismatch or '无'}")
 
-    ok = (n_links == 8 + EXPECT_ORCA_LINKS
-          and n_joints == 7 + EXPECT_ORCA_JOINTS + 1
-          and n_revolute == 7 and n_prismatic == 0 and n_fixed == EXPECT_ORCA_JOINTS + 1
+    ok = (n_links == 9 + EXPECT_ORCA_LINKS
+          and n_joints == 8 + EXPECT_ORCA_JOINTS + 1
+          and n_revolute == 7 and n_prismatic == 0 and n_fixed == EXPECT_ORCA_JOINTS + 2
           and not leftover and pkg == 0 and not orca_mesh_missing
-          and not mismatch and len(unchanged) == 15
+          and not mismatch and len(unchanged) == 17
           and n_orca_links == EXPECT_ORCA_LINKS and n_orca_joints == EXPECT_ORCA_JOINTS
           and n_orca_mount == 1 and not orca_mismatch
           and len(orca_unchanged) == len(orca_src) == EXPECT_ORCA_LINKS + EXPECT_ORCA_JOINTS)

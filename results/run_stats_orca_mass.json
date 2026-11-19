@@ -1,17 +1,17 @@
 {
- "date": "2026-11-18",
+ "date": "2026-11-19",
  "platform": "达妙七轴谐波机械臂（官方 URDF 派生）+ ORCA Hand 末端执行器（v8.3，TCP=果实被持点口径）",
  "frames": 1,
  "render_time_s": 0.3,
- "total_time_s": 35.1,
- "wall_clock": "2026-11-18 23:57 → 23:57",
+ "total_time_s": 40.7,
+ "wall_clock": "2026-11-19 12:29 → 12:29",
  "csv_rows": 5,
  "csv_cols": 21,
  "threshold_m": 0.005,
  "passed": "5/5",
- "err_min_mm": 0.027,
- "err_max_mm": 0.162,
- "limit_margins": "0.456 rad、0.268 rad、0.443 rad、0.647 rad、0.406 rad",
+ "err_min_mm": 0.029,
+ "err_max_mm": 0.126,
+ "limit_margins": "0.210 rad、0.318 rad、0.172 rad、0.531 rad、0.506 rad",
  "drop_residual_mm": 0.0,
  "drop_limit_ok": "5/5",
  "orca_mode": "with-orca-mass（带载对照）",
@@ -19,12 +19,12 @@
  "pybullet": "3.2.7 (build Jan 29 2025)",
  "static_torque_peak_Nm_with_orca": {
   "J1": 0.0,
-  "J2": 4.249,
-  "J3": 1.7486,
-  "J4": 6.0479,
-  "J5": 2.2424,
-  "J6": 3.0302,
-  "J7": 1.983
+  "J2": 4.2332,
+  "J3": 1.3492,
+  "J4": 6.4583,
+  "J5": 1.9797,
+  "J6": 3.0626,
+  "J7": 2.5605
  },
  "note": "--with-orca-mass 为带载对照实验：重力 + ORCA 官方质量 + 静态持重力矩 PyBullet 实算；数字不得与无重力基线混报"
 }
