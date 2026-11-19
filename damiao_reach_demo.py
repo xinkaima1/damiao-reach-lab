@@ -165,57 +165,6 @@ def set_joints(robot, q):
         p.resetJointState(robot, i, q[i])
 
 
-def frame_from_z_near(d, R_seed):
-    """构造 +z 对准 d、滚转最接近 R_seed 的旋转矩阵。
-
-    爪（章鱼爪）绕工具轴旋转对称，**滚转不该被约束**——硬约束 6D 朝向会让 j7
-    为凑一个任意滚转角而整圈拧（用户 2026-11-18 指出「观察时老扭」）。这里只定
-    轴向（2 个自由度），滚转取种子姿态在该轴上的投影，最小化腕部扭转。
-    """
-    z = np.asarray(d, dtype=float)
-    z = z / np.linalg.norm(z)
-    x = np.asarray(R_seed, dtype=float)[:, 0]
-    x = x - (x @ z) * z                       # 投影到 ⊥z 平面
-    if np.linalg.norm(x) < 1e-3:              # 种子 x 与 d 近平行 → 退回确定性帧
-        return frame_from_z(d)
-    x = x / np.linalg.norm(x)
-    return np.column_stack([x, np.cross(z, x), z])
-
-
-def frame_from_z(d):
-    """单位向量 d → 旋转矩阵（局部 +z 对准 d，无额外翻滚）。"""
-    z = np.asarray(d, dtype=float)
-    z = z / np.linalg.norm(z)
-    x = np.cross([0.0, 0.0, 1.0], z)
-    if np.linalg.norm(x) < 1e-6:
-        x = np.array([1.0, 0.0, 0.0])
-    x = x / np.linalg.norm(x)
-    return np.column_stack([x, np.cross(z, x), z])
-
-
-def mat_quat(R):
-    """旋转矩阵 → 四元数 (x,y,z,w)（Shepperd 法，本 pybullet 无 Matrix→Quaternion API）。"""
-    m = np.asarray(R, dtype=float)
-    tr = m[0, 0] + m[1, 1] + m[2, 2]
-    if tr > 0:
-        S = math.sqrt(tr + 2.0) * 2
-        w, x = 0.25 * S, (m[2, 1] - m[1, 2]) / S
-        y, z = (m[0, 2] - m[2, 0]) / S, (m[1, 0] - m[0, 1]) / S
-    elif m[0, 0] > m[1, 1] and m[0, 0] > m[2, 2]:
-        S = math.sqrt(1.0 + m[0, 0] - m[1, 1] - m[2, 2]) * 2
-        w, x = (m[2, 1] - m[1, 2]) / S, 0.25 * S
-        y, z = (m[0, 1] + m[1, 0]) / S, (m[0, 2] + m[2, 0]) / S
-    elif m[1, 1] > m[2, 2]:
-        S = math.sqrt(1.0 + m[1, 1] - m[0, 0] - m[2, 2]) * 2
-        w, x = (m[0, 2] - m[2, 0]) / S, (m[0, 1] + m[1, 0]) / S
-        y, z = 0.25 * S, (m[1, 2] + m[2, 1]) / S
-    else:
-        S = math.sqrt(1.0 + m[2, 2] - m[0, 0] - m[1, 1]) * 2
-        w, x = (m[1, 0] - m[0, 1]) / S, (m[0, 2] + m[2, 0]) / S
-        y, z = (m[1, 2] + m[2, 1]) / S, 0.25 * S
-    return [x, y, z, w]
-
-
 def quat_R(quat):
     """四元数 (x,y,z,w) → 3×3 旋转矩阵。"""
     x, y, z, w = quat
@@ -237,49 +186,28 @@ def fk_pos(robot, ee_idx):
     return np.array(ls[4], dtype=float) + quat_R(ls[5]) @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
 
 
-def solve_ik(robot, ee_idx, target, seed=None, face=None):
-    """两段式位置-only IK（TCP 口径；face 给定时为 6D 朝向约束版）。
+def solve_ik(robot, ee_idx, target, seed=None):
+    """两段式位置-only IK。
 
-    TCP = link7 原点 + R·[0,0,TOOL_OFFSET_Z]，腕部停在果实体外 L=0.11 m。
-    face=None（演示层默认）：TCP 定点迭代（腕部目标 = 目标 − R·[0,0,L]，≤4 轮）+ 数值精修；
-    face 给定：内置 6D IK（targetOrientation）+ 数值精修，失配时退回确定性帧重解。
+    第一段：PyBullet 内置求解器出粗解——显式限位 / jointRanges / HOME 作 nullspace 参考；
+            初值取上一点收敛后的实际关节角（解连续性处理，避免 7 轴冗余的零空间漂移）。
+    第二段：refine_ik() 做位置-only 数值精修，把残差压到亚毫米。
+
+    注：末端参考点取 link7 原点（即 joint7 轴心），joint7 旋转不改变该点位置，
+    因此位置-only IK 无法确定 j7，它保持初值（= 0）；不影响位置误差判定。
     """
     seed = list(seed) if seed is not None else list(HOME)
     set_joints(robot, seed)
-
-    def coarse(t, quat_t=None):
-        kw = {"targetOrientation": quat_t} if quat_t is not None else {}
-        return list(p.calculateInverseKinematics(
-            robot, ee_idx, [float(v) for v in t], **kw,
-            lowerLimits=[lo for lo, _ in LIMITS],
-            upperLimits=[hi for _, hi in LIMITS],
-            jointRanges=[hi - lo for lo, hi in LIMITS],
-            restPoses=list(seed),
-            maxNumIterations=IK_MAX_ITER,
-            residualThreshold=IK_TOL,
-        )[:NDOF])
-
-    tgt = np.asarray(target, dtype=float)
-    if face is not None:
-        R_f = frame_from_z(face)
-        q = coarse(tgt - R_f @ np.array([0.0, 0.0, TOOL_OFFSET_Z]), mat_quat(R_f))
-    else:
-        q = coarse(tgt)
-        for _ in range(4):                       # TCP 定点迭代（位置-only 也把腕部撤回 L）
-            set_joints(robot, q)
-            if np.linalg.norm(np.asarray(target, dtype=float) - fk_pos(robot, ee_idx)) < 1e-5:
-                break
-            R = quat_R(p.getLinkState(robot, ee_idx, computeForwardKinematics=1)[5])
-            tgt = np.asarray(target, dtype=float) - R @ np.array([0.0, 0.0, TOOL_OFFSET_Z])
-            q = coarse(tgt)
-    q, err = refine_ik(robot, ee_idx, target, q, iters=100)
-    if err > 1e-4 and face is not None:          # 6D 回退：确定性帧重解
-        R_alt = frame_from_z(face)
-        q_alt = coarse(np.asarray(target, dtype=float) - R_alt @ np.array([0.0, 0.0, TOOL_OFFSET_Z]),
-                       mat_quat(R_alt))
-        q_alt, err_alt = refine_ik(robot, ee_idx, target, q_alt, iters=100)
-        if err_alt < err:
-            q = q_alt
+    q = list(p.calculateInverseKinematics(
+        robot, ee_idx, list(target),
+        lowerLimits=[lo for lo, _ in LIMITS],
+        upperLimits=[hi for _, hi in LIMITS],
+        jointRanges=[hi - lo for lo, hi in LIMITS],
+        restPoses=HOME,
+        maxNumIterations=IK_MAX_ITER,
+        residualThreshold=IK_TOL,
+    )[:NDOF])
+    q, _ = refine_ik(robot, ee_idx, target, q)
     return q
 
 
@@ -478,68 +406,60 @@ def main():
         n_frames += 1
         return frame
 
-    # ---- 演示层相位引擎：观察→确定位置→夹取→合拢→抓住→移动→松开→掉落→回预设 ----
-    FACE_DIR = (0.42, 0.20, -0.885)                # 末端朝向（确定性）：爪轴指向前下方
-    PRESET_TCP = (0.10, -0.04, 0.54)               # 预设/待机位（TCP 坐标）：高于果实簇、靠内，远离果实
-    OBS_BACK = 0.09                                # 观察位：TCP 沿爪轴后撤距离（m）
-    DROP_ABOVE = 0.12                              # 松开点：篮内槽位正上方高度（m）
-    G_ANIM = 9.81                                  # 掉落动画重力加速度（m/s²）
+    def place_into_basket(name, q_start, slot_idx):
+        """演示层：果实随末端搬到篮子、末端下降放果、果实入篮留存。
 
-    def servo_to(q_start, q_to, dur_s, t_start, t_end, carry_ball=None):
-        """关节伺服沿梯形轨迹从 q_start 到 q_to；触手形态 t_start→t_end；carry_ball 跟随 TCP。
-
-        q_start 必须显式给定并在起跑前 set_joints 归位：solve_ik 内部的 set_joints
-        会把关节直接摆到解上，若从这里取「当前状态」当轨迹起点，起点=终点，
-        梯形轨迹全程零位移 → 机械臂在各相位之间瞬移（2026-11-18 用户指出）。
+        不写 rows、不参与误差判定、不改阈值与限位；--no-video 下伺服与视觉搬运仍完整执行。
         """
         nonlocal tentacle_t
-        set_joints(robot, q_start)                    # 归位到相位起点（抵消 solve_ik 污染）
-        steps = max(1, int(round(dur_s * SIM_HZ)))
-        prof = trap_profile(steps)
+        q_drop = solve_ik(robot, ee_idx, BASKET_DROP, seed=q_start)
+        for j in range(NDOF):
+            p.resetJointState(robot, j, q_drop[j])
+        drop_err = math.dist(fk_pos(robot, ee_idx), BASKET_DROP)
+        drop_in_lim, _ = check_limits(q_drop)
+        for j in range(NDOF):                         # 放果段起始 = 当前草莓点伺服后的姿态
+            p.resetJointState(robot, j, q_start[j])
         dt = 1.0 / SIM_HZ
         q_prev = list(q_start)
-        for k, sk in enumerate(prof):
-            q_cmd = [q_prev[j] + sk * (q_to[j] - q_prev[j]) for j in range(NDOF)]
+        for k, s in enumerate(trap_profile(PLACE_STEPS)):
+            q_cmd = [q_start[j] + s * (q_drop[j] - q_start[j]) for j in range(NDOF)]
             v_cmd = [0.0] * NDOF if k == 0 else [(q_cmd[j] - q_prev[j]) / dt for j in range(NDOF)]
             p.setJointMotorControlArray(robot, range(NDOF), p.POSITION_CONTROL,
                                         targetPositions=q_cmd, targetVelocities=v_cmd,
                                         forces=FORCES, positionGains=[POS_GAIN] * NDOF,
                                         velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
-            tentacle_t = t_start + (t_end - t_start) * (k / max(1, steps - 1))
-            if carry_ball is not None:
-                tcp = fk_pos(robot, ee_idx)
-                p.resetBasePositionAndOrientation(carry_ball,
-                                                  [float(tcp[0]), float(tcp[1]), float(tcp[2])],
-                                                  [0.0, 0.0, 0.0, 1.0])
-            if writer is not None and k % args.every == 0:
-                shoot()
-        tentacle_t = t_end
-
-    def drop_fruit(ball, p0, p1):
-        """松开后果实自由坠落至篮内槽位（脚本化抛体，g=9.81，纯视觉）。"""
-        dz = max(1e-4, p0[2] - p1[2])
-        t_fall = math.sqrt(2.0 * dz / G_ANIM)
-        steps = max(2, int(round(t_fall * SIM_HZ)))
-        vx = (p1[0] - p0[0]) / t_fall
-        vy = (p1[1] - p0[1]) / t_fall
-        for k in range(steps):
-            tt = (k + 1) / steps * t_fall
-            p.resetBasePositionAndOrientation(ball,
-                                              [p0[0] + vx * tt, p0[1] + vy * tt,
-                                               max(p1[2], p0[2] - 0.5 * G_ANIM * tt * tt)],
+            tcp = fk_pos(robot, ee_idx)   # 果实跟随夹持中心（TCP）
+            p.resetBasePositionAndOrientation(ball_ids[name],
+                                              [float(tcp[0]), float(tcp[1]), float(tcp[2])],
                                               [0.0, 0.0, 0.0, 1.0])
-            if writer is not None and k % 2 == 0:
+            q_prev = list(q_cmd)
+            if writer is not None and k % args.every == 0:
+                tentacle_t = 1.0                     # 搬运中保持缠绕包覆夹住
                 shoot()
-        p.resetBasePositionAndOrientation(ball, [float(p1[0]), float(p1[1]), float(p1[2])],
-                                          [0.0, 0.0, 0.0, 1.0])
+        for k in range(PLACE_HOLD):                  # 入篮保持段：末端停在放果点，果实随末端下降
+            p.setJointMotorControlArray(robot, range(NDOF), p.POSITION_CONTROL,
+                                        targetPositions=q_drop, targetVelocities=[0.0] * NDOF,
+                                        forces=FORCES, positionGains=[POS_GAIN] * NDOF,
+                                        velocityGains=[VEL_GAIN] * NDOF)
+            p.stepSimulation()
+            tcp = fk_pos(robot, ee_idx)   # 果实跟随夹持中心（TCP）
+            p.resetBasePositionAndOrientation(ball_ids[name],
+                                              [float(tcp[0]), float(tcp[1]), float(tcp[2])],
+                                              [0.0, 0.0, 0.0, 1.0])
+            if writer is not None and k % args.every == 0:
+                tentacle_t = 1.0 - min(1.0, max(0.0, (k / PLACE_HOLD - RELEASE_START) / (1.0 - RELEASE_START)))
+                shoot()
+        p.resetBasePositionAndOrientation(ball_ids[name], list(FRUIT_SLOTS[slot_idx]),
+                                          [0.0, 0.0, 0.0, 1.0])   # 果实入篮并留存
+        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.75, 0.12, 0.12, 1.0])
+        tentacle_t = 0.0                                # 放果后回到卷曲待机，准备下一颗
+        q_end = [p.getJointState(robot, j)[0] for j in range(NDOF)]
+        return q_end, drop_err, drop_in_lim
 
-    rows, place_checks = [], []
-    # 起始姿态 = 预设待机位（面向工作台的「预备」姿态）：避免从全零 HOME 到观察位
-    # 的一次性大幅腕部翻转（用户 2026-11-18 指出「观察时老扭」）
-    q_cur = solve_ik(robot, ee_idx, PRESET_TCP, seed=list(HOME))   # 位置-only，不约束腕部朝向
-    for i in range(NDOF):
-        p.resetJointState(robot, i, q_cur[i])
+    rows, q_cur, place_checks = [], list(HOME), []
+    for i in range(NDOF):                             # 伺服起始 = HOME
+        p.resetJointState(robot, i, HOME[i])
     t_total0 = time.perf_counter()
 
     print(f"{'点':4s} {'目标(m)':22s} {'IK残差(mm)':>11s} {'伺服误差(mm)':>12s} "
@@ -547,65 +467,63 @@ def main():
     for name, target in TARGETS:
         precheck(target, name)
 
-        # ---- 采摘流程：观察→确定位置→夹取→合拢→抓住→移动→松开→掉落→回预设 ----
-        slot = FRUIT_SLOTS[len(place_checks)]
-        p_drop = (slot[0], slot[1], slot[2] + DROP_ABOVE)
-        # ① 回预设位并停顿（模仿观察：**静止不动**，不转向、不摆头、不扭）
-        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_preset_hold = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur)   # 位置-only，腕部无朝向约束
-        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])
-        servo_to(q_from, q_preset_hold, 1.0, 0.0, 0.0)
-        for k in range(int(round(0.7 * SIM_HZ))):      # 原地停顿 0.7 s
-            p.stepSimulation()
-            if writer is not None and k % args.every == 0:
-                shoot()
-
-        # ③ 夹取：TCP 从观察位沿爪轴推进到果实
-        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q = solve_ik(robot, ee_idx, target, seed=q_preset_hold)
-        for j in range(NDOF):                          # 静态判定：关节置于 IK 解测纯残差
+        # ---- 静态判定：IK 求解 + FK 残差 + 限位 ----
+        q = solve_ik(robot, ee_idx, target, seed=q_cur)   # 以上一点实际关节角作初值（解连续性）
+        for j in range(NDOF):                         # 设置 IK 解测静态残差
             p.resetJointState(robot, j, q[j])
-        # 静态判定（TCP 口径）
         ee_com = fk_ee(robot, ee_idx)[1]              # COM 备查列（相对 TCP，仅记录不判定）
-        err_com = math.dist(ee_com, target)           # COM 备查距离
         err_ik = math.dist(fk_pos(robot, ee_idx), target)   # TCP 口径
+        err_com = math.dist(ee_com, target)
         in_lim, bad = check_limits(q)
-        servo_to(q_from, q, 1.8, 0.0, 0.5)
 
-
-        # ④ 合拢：触手沿球面收拢（0.5→1.0），同步测定 TCP 收敛
-        steady, converge_step = 0, None
-        steps_close = int(round(0.8 * SIM_HZ))
-        for k in range(steps_close):
-            p.setJointMotorControlArray(robot, range(NDOF), p.POSITION_CONTROL,
-                                        targetPositions=q, targetVelocities=[0.0] * NDOF,
-                                        forces=FORCES, positionGains=[POS_GAIN] * NDOF,
-                                        velocityGains=[VEL_GAIN] * NDOF)
-            tentacle_t = 0.5 + 0.5 * (k / max(1, steps_close - 1))
+        # ---- 伺服执行：回当前姿态 → 梯形轨迹跟踪 → 收敛观察 → 超时兜底 ----
+        for j in range(NDOF):
+            p.resetJointState(robot, j, q_cur[j])
+        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])  # 当前点高亮
+        prof = trap_profile(ANIM_STEPS)                # 轨迹规划层：梯形目标轨迹
+        dt = 1.0 / SIM_HZ
+        q_prev = list(q_cur)
+        for k, s in enumerate(prof):
+            q_cmd = [q_cur[j] + s * (q[j] - q_cur[j]) for j in range(NDOF)]
+            v_cmd = [0.0] * NDOF if k == 0 else [(q_cmd[j] - q_prev[j]) / dt for j in range(NDOF)]
+            p.setJointMotorControlArray(               # 关节伺服层：位置伺服 + 速度前馈
+                robot, range(NDOF), p.POSITION_CONTROL, targetPositions=q_cmd,
+                targetVelocities=v_cmd, forces=FORCES,
+                positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
+            p.stepSimulation()
+            q_prev = list(q_cmd)
+            if writer is not None and k % args.every == 0:
+                tentacle_t = 0.5 * min(1.0, max(0.0, (k / ANIM_STEPS - EXTEND_START) / (1.0 - EXTEND_START)))
+                shoot()
+        steady, converge_step = 0, None                # 收敛观察窗（保持段 2 s，渲染）
+        for k in range(HOLD_STEPS):
+            p.setJointMotorControlArray(
+                robot, range(NDOF), p.POSITION_CONTROL, targetPositions=q,
+                targetVelocities=[0.0] * NDOF, forces=FORCES,
+                positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
             ee = fk_pos(robot, ee_idx)
             steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
             if steady >= STEADY_N and converge_step is None:
                 converge_step = k
             if writer is not None and k % args.every == 0:
+                tentacle_t = 0.5 + 0.5 * min(1.0, k / (WRAP_END * HOLD_STEPS))
                 shoot()
-
-        # ⑤ 抓住：保持段（0.3 s），err_track 在此测定
-        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.95, 0.80, 0.10, 1.0])
-        for k in range(int(round(0.6 * SIM_HZ))):
-            p.setJointMotorControlArray(robot, range(NDOF), p.POSITION_CONTROL,
-                                        targetPositions=q, targetVelocities=[0.0] * NDOF,
-                                        forces=FORCES, positionGains=[POS_GAIN] * NDOF,
-                                        velocityGains=[VEL_GAIN] * NDOF)
+        budget = SERVO_MAX_STEPS - ANIM_STEPS - HOLD_STEPS   # 超时兜底段（不渲染）
+        for k in range(budget if converge_step is None else 0):
+            p.setJointMotorControlArray(
+                robot, range(NDOF), p.POSITION_CONTROL, targetPositions=q,
+                targetVelocities=[0.0] * NDOF, forces=FORCES,
+                positionGains=[POS_GAIN] * NDOF, velocityGains=[VEL_GAIN] * NDOF)
             p.stepSimulation()
             ee = fk_pos(robot, ee_idx)
             steady = steady + 1 if math.dist(ee, target) <= args.threshold else 0
-            if steady >= STEADY_N and converge_step is None:
-                converge_step = steps_close + k
-            if writer is not None and k % args.every == 0:
-                shoot()
-        err_track = math.dist(fk_pos(robot, ee_idx), target)
-        q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]
+            if steady >= STEADY_N:
+                converge_step = ANIM_STEPS + HOLD_STEPS + k
+                break
+        ee_track = fk_pos(robot, ee_idx)
+        err_track = math.dist(ee_track, target)
+        q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]   # 伺服后实际关节角
 
         reached = (in_lim and err_ik <= args.threshold
                    and err_track <= args.threshold and converge_step is not None)
@@ -633,23 +551,11 @@ def main():
               f"{'OK' if in_lim else '超限':4s} "
               f"{str(converge_step) if converge_step is not None else '超时':>6s} "
               f"{'到达' if reached else '未达标':6s}")
+        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.10, 0.70, 0.15, 1.0])  # 已到达→绿色
 
-        # ⑥ 移动：果实跟随 TCP 运往篮子松开点（槽位正上方）
-        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_drop = solve_ik(robot, ee_idx, p_drop, seed=q_cur)
-        servo_to(q_from, q_drop, 2.0, 1.0, 1.0, carry_ball=ball_ids[name])
-        # ⑦ 松开：果实固定在松开点，爪张开（1.0→0 回预设形态）
-        release_err = math.dist(fk_pos(robot, ee_idx), p_drop)
-        servo_to(q_drop, q_drop, 0.5, 1.0, 0.0)
-        # ⑧ 果实掉落：从松开点自由坠落至槽位
-        drop_fruit(ball_ids[name], p_drop, slot)
-        p.changeVisualShape(ball_ids[name], -1, rgbaColor=[0.10, 0.70, 0.15, 1.0])  # 已采摘→绿色
-        # ⑨ 回预设姿势：爪已回卷，末端返回预设位（面向下一个果实的待机朝向）
-        q_from = [p.getJointState(robot, j)[0] for j in range(NDOF)]
-        q_preset = solve_ik(robot, ee_idx, PRESET_TCP, seed=q_cur)
-        servo_to(q_from, q_preset, 1.4, 0.0, 0.0)
-        place_checks.append((name, release_err * 1000, True))
-        q_cur = [p.getJointState(robot, j)[0] for j in range(NDOF)]
+        # ---- 演示层：抓 → 移到篮子 → 末端下降放果 → 前往下一点（不参与误差判定） ----
+        q_cur, drop_err, drop_ok = place_into_basket(name, q_cur, len(place_checks))
+        place_checks.append((name, drop_err * 1000, drop_ok))
 
     t_total = time.perf_counter() - t_total0
     imageio.imwrite("results/scene.png", shoot(force=True))   # 终态场景截图（writer 仍打开，帧同步入视频）
@@ -675,9 +581,10 @@ def main():
           f"可经 --threshold 配置）")
     print(f"渲染：{n_frames} 帧 @ {w}x{h}，渲染耗时 {t_render:.1f} s；全程耗时 {t_total:.1f} s")
     if place_checks:
-        print(f"演示层：{len(place_checks)} 段完整采摘流程（观察→确定位置→夹取→合拢→抓住→移动→"
-              f"松开→果实掉落→回预设），松开点 TCP 残差 "
-              f"{min(e for _, e, _ in place_checks):.2f}–{max(e for _, e, _ in place_checks):.2f} mm；"
+        print(f"演示层：{len(place_checks)} 段抓放（放果点 {BASKET_DROP} m，末端下降示意「低头放果」），"
+              f"放果点 IK 残差 {min(e for _, e, _ in place_checks):.2f}–"
+              f"{max(e for _, e, _ in place_checks):.2f} mm，"
+              f"限位 {sum(ok for _, _, ok in place_checks)}/{len(place_checks)} OK；"
               f"该段为视觉示意，不参与误差判定与 CSV")
     print(f"演示层仿生触手：{TENTACLE_COUNT} 根 x {TENTACLE_SEGS} 段三阶段视觉示意，"
           f"卷曲(rho=a*exp(b*theta)) -> 到位反向展开 -> 球面缠绕包覆果实，"
